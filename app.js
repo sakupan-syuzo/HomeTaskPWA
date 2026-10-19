@@ -143,6 +143,7 @@
     themeBtnLabel: document.getElementById('theme-btn-label'),
     btnManualReset: document.getElementById('btn-manual-reset'),
     btnOpenEditor: document.getElementById('btn-open-editor'),
+    sectionNursery: document.getElementById('section-nursery'),
     gridNursery: document.getElementById('grid-nursery'),
     gridChores: document.getElementById('grid-chores'),
     catNurseryCount: document.getElementById('cat-nursery-count'),
@@ -249,7 +250,10 @@
               disabledTaskIds: Array.isArray(savedChild.disabledTaskIds) ? savedChild.disabledTaskIds : []
             };
           });
-          if (appState.activeChildId > appState.childCount) {
+          if (typeof parsed.childCount === 'number' && parsed.childCount >= 0 && parsed.childCount <= 4) {
+            appState.childCount = parsed.childCount;
+          }
+          if (appState.childCount > 0 && appState.activeChildId > appState.childCount) {
             appState.activeChildId = 1;
           }
         }
@@ -791,9 +795,22 @@
 
   /**
    * 子ども人数分（1〜4人すべて）の「🎒 保育園の用意」を同時に一覧描画
+   * 子ども0人の場合は保育園セクション自体を非表示にし、家庭内タスク（家事・ゴミ出し）のみを大きく表示する
    */
   function renderNurseryGrid(todayDay) {
     dom.gridNursery.innerHTML = '';
+
+    if (appState.childCount === 0) {
+      if (dom.sectionNursery) {
+        dom.sectionNursery.hidden = true;
+      }
+      return;
+    }
+
+    if (dom.sectionNursery) {
+      dom.sectionNursery.hidden = false;
+    }
+
     const activeChildren = appState.children.slice(0, appState.childCount);
 
     let totalActiveAll = 0;
@@ -1104,7 +1121,7 @@
   }
 
   // ==========================================================================
-  // 8. 設定・タスク編集モーダル（子ども1〜4人・項目別ON/OFF・おむつ枚数・ゴミ曜日）
+  // 8. 設定・タスク編集モーダル（子ども0〜4人・項目別ON/OFF・おむつ枚数・ゴミ曜日）
   // ==========================================================================
 
   function openResetModal() {
@@ -1138,7 +1155,7 @@
   }
 
   /**
-   * 1. 子ども人数（1〜4人）ボタンと各子どもの名前・おむつ必要枚数・項目ごとON/OFF設定を描画
+   * 1. 子ども人数（0〜4人）ボタンと各子どもの名前・おむつ必要枚数・項目ごとON/OFF設定を描画
    */
   function renderChildConfigSection() {
     const countBtns = dom.childCountButtons.querySelectorAll('.count-btn');
@@ -1148,6 +1165,16 @@
     });
 
     dom.childrenConfigGrid.innerHTML = '';
+
+    if (appState.childCount === 0) {
+      const msg = document.createElement('div');
+      msg.className = 'empty-category-msg';
+      msg.style.padding = '8px 0';
+      msg.textContent = '「0人 (なし)」選択中：メイン画面には「🏠 今日の家事・ゴミ出し」のみが表示されます。';
+      dom.childrenConfigGrid.appendChild(msg);
+      return;
+    }
+
     const activeChildren = appState.children.slice(0, appState.childCount);
 
     activeChildren.forEach((child) => {
@@ -1437,14 +1464,14 @@
       if (e.target === dom.editorModal) closeEditorModal();
     });
 
-    // 子ども人数（1〜4人）切り替えボタン
+    // 子ども人数（0〜4人）切り替えボタン
     dom.childCountButtons.addEventListener('click', (e) => {
       const btn = e.target.closest('.count-btn');
       if (!btn) return;
       const count = Number(btn.dataset.count);
-      if (count >= 1 && count <= 4) {
+      if (!Number.isNaN(count) && count >= 0 && count <= 4) {
         appState.childCount = count;
-        if (appState.activeChildId > count) {
+        if (count > 0 && appState.activeChildId > count) {
           appState.activeChildId = 1;
         }
         saveState();

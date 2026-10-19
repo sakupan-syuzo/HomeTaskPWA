@@ -98,8 +98,8 @@
 
     <!-- 右カラム（幅60%）：タスクパネルエリア -->
     <main class="right-panel">
-      <!-- セクション1: 保育園の用意（子ども1〜4人全員分を同時表示） -->
-      <section class="task-category task-category-nursery" aria-labelledby="cat-nursery-title">
+      <!-- セクション1: 保育園の用意（子ども1〜4人全員分を同時表示 / 0人時は非表示） -->
+      <section class="task-category task-category-nursery" id="section-nursery" aria-labelledby="cat-nursery-title">
         <header class="category-header">
           <div class="category-title-wrap">
             <h2 id="cat-nursery-title">🎒 保育園の用意</h2>
@@ -111,10 +111,11 @@
       </section>
 
       <!-- セクション2: 今日の家事・ゴミ出し -->
-      <section class="task-category task-category-chores" aria-labelledby="cat-chores-title">
+      <section class="task-category task-category-chores" id="section-chores" aria-labelledby="cat-chores-title">
         <header class="category-header">
           <div class="category-title-wrap">
             <h2 id="cat-chores-title">🏠 今日の家事・ゴミ出し</h2>
+            <span class="status-hint-label">タップ: 未完了 → 完了 → 不要</span>
           </div>
           <span class="category-badge" id="cat-chores-count">0 / 0</span>
         </header>
@@ -127,7 +128,7 @@
   <div class="modal-backdrop" id="reset-modal" hidden>
     <div class="modal-dialog modal-sm" role="dialog" aria-modal="true" aria-labelledby="reset-modal-title">
       <h3 class="modal-title" id="reset-modal-title">完了状態のリセット</h3>
-      <p class="modal-desc">今日のすべてのタスク（全子どもの保育園用意・家事）を「未完了」に戻しますか？<br><small>※「常時不要」に設定した項目はそのまま維持されます。</small></p>
+      <p class="modal-desc">今日のすべてのタスクを「未完了」に戻しますか？<br><small>※「常時不要」に設定した項目はそのまま維持されます。</small></p>
       <div class="modal-actions">
         <button type="button" class="modal-btn modal-btn-cancel" id="btn-cancel-reset">キャンセル</button>
         <button type="button" class="modal-btn modal-btn-danger" id="btn-confirm-reset">リセットする</button>
@@ -144,13 +145,14 @@
       </header>
 
       <div class="modal-body">
-        <!-- 1. 保育園の用意：子ども人数（1〜4人）＆各子どもの設定 -->
+        <!-- 1. 保育園の用意：子ども人数（0〜4人）＆各子どもの設定 -->
         <section class="settings-block">
           <div class="settings-block-header">
-            <h4>👶 保育園の用意（子ども1〜4人設定・おむつ必要枚数）</h4>
+            <h4>👶 保育園の用意（子ども0〜4人設定・おむつ必要枚数）</h4>
             <div class="child-count-selector">
               <span>子どもの人数：</span>
               <div class="count-btn-group" id="child-count-buttons">
+                <button type="button" class="count-btn" data-count="0">0人 (なし)</button>
                 <button type="button" class="count-btn" data-count="1">1人</button>
                 <button type="button" class="count-btn" data-count="2">2人</button>
                 <button type="button" class="count-btn" data-count="3">3人</button>
