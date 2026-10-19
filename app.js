@@ -137,6 +137,7 @@
     sensorDot: document.getElementById('sensor-dot'),
     sensorText: document.getElementById('sensor-text'),
     btnInstallPwa: document.getElementById('btn-install-pwa'),
+    btnFullscreenClock: document.getElementById('btn-fullscreen-clock'),
     btnThemeToggle: document.getElementById('btn-theme-toggle'),
     themeBtnIcon: document.getElementById('theme-btn-icon'),
     themeBtnLabel: document.getElementById('theme-btn-label'),
@@ -506,10 +507,13 @@
     } else if (themeMode === 'dark') {
       resolvedTheme = 'dark';
     } else {
-      const inNightWindow = isNightTimeWindow(now);
+      // 自動モード（3段階ハイブリッド制御）
       if (sensorActive && sensorDarkState !== null) {
-        resolvedTheme = (sensorDarkState || inNightWindow) ? 'dark' : 'light';
+        // 第1優先：照度センサー（AmbientLightSensor）が有効な場合は、時間帯に関わらず実際の部屋の明るさで昼/夜を決定
+        resolvedTheme = sensorDarkState ? 'dark' : 'light';
       } else {
+        // 第2・第3優先：センサー非対応または未取得時は、OSダークモード設定または夜間時間帯（21:00〜翌6:00）で決定
+        const inNightWindow = isNightTimeWindow(now);
         resolvedTheme = (osDarkMediaQuery.matches || inNightWindow) ? 'dark' : 'light';
       }
     }
@@ -1405,6 +1409,15 @@
       }
     });
 
+    // 今すぐ時計全画面ボタン
+    if (dom.btnFullscreenClock) {
+      dom.btnFullscreenClock.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        enterScreensaver();
+      });
+    }
+
     // テーマ切替
     dom.btnThemeToggle.addEventListener('click', cycleThemeMode);
 
@@ -1474,12 +1487,16 @@
   }
 
   // ==========================================================================
-  // 9. 5分無操作時の全画面時計スクリーンセーバー＆復帰時の誤操作防止ガード
+  // 9. 5分無操作時（または手動ボタン押下時）の全画面時計＆復帰時の誤操作防止ガード
   // ==========================================================================
+  let enterGuardUntil = 0;
 
   function enterScreensaver() {
     if (isScreensaverActive) return;
     isScreensaverActive = true;
+    clearTimeout(idleTimer);
+    // 手動ボタン押下直後の指離し・遅延イベントで即解除されないよう350msガード
+    enterGuardUntil = Date.now() + 350;
     if (dom.screensaverOverlay) {
       dom.screensaverOverlay.hidden = false;
     }
@@ -1487,6 +1504,7 @@
 
   function wakeFromScreensaver() {
     if (!isScreensaverActive) return;
+    if (Date.now() < enterGuardUntil) return;
     isScreensaverActive = false;
     // 復帰タップの直後450ms間は背後のボタン・カードへのclick等の突き抜けを完全にブロック
     wakeGuardUntil = Date.now() + 450;

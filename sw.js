@@ -1,4 +1,4 @@
-const CACHE_NAME = 'family-task-clock-v9';
+const CACHE_NAME = 'family-task-clock-v11';
 const ASSETS_TO_CACHE = [
   './',
   './index.html',
