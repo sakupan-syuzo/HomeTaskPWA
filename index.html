@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="ja" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#fdfbf7" id="meta-theme-color">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>ファミリータスク＆置時計ボード</title>
+  <link rel="manifest" href="./manifest.json">
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div class="dashboard">
+    <!-- 左カラム（幅40%）：時計＆ステータスエリア -->
+    <aside class="left-panel">
+      <div class="clock-section" id="clock-section" role="button" tabindex="0" title="タップしてアナログ時計 / デジタル時計を切り替え">
+        <div class="clock-header-row">
+          <div class="date-display" id="date-display">--月--日 (-)</div>
+          <span class="clock-style-pill" id="clock-style-pill">🕰️ アナログ / 🔢 デジタル切替</span>
+        </div>
+
+        <!-- アナログ時計ビュー（補助デジタル付き） -->
+        <div class="analog-clock-wrap" id="analog-clock-wrap">
+          <svg class="analog-clock-svg" viewBox="0 0 260 260" aria-label="アナログ時計">
+            <circle class="analog-face" cx="130" cy="130" r="122" />
+            <g id="analog-ticks"></g>
+            <g id="analog-numbers"></g>
+            <!-- 時針・分針・秒針 -->
+            <line id="analog-hour-hand" class="analog-hand analog-hour" x1="130" y1="142" x2="130" y2="62" />
+            <line id="analog-min-hand" class="analog-hand analog-min" x1="130" y1="146" x2="130" y2="36" />
+            <line id="analog-sec-hand" class="analog-hand analog-sec" x1="130" y1="154" x2="130" y2="28" />
+            <circle class="analog-center-outer" cx="130" cy="130" r="6" />
+            <circle class="analog-center-inner" cx="130" cy="130" r="2.5" />
+          </svg>
+        </div>
+
+        <!-- デジタル時計ビュー（アナログ表示時はコンパクトな補助表示になる） -->
+        <div class="clock-display" id="digital-clock-wrap" aria-label="現在時刻">
+          <span class="clock-hm" id="clock-hm">00:00</span>
+          <span class="clock-sec" id="clock-sec">00</span>
+        </div>
+      </div>
+
+      <div class="progress-section">
+        <div class="progress-header">
+          <span class="progress-label">今日の進捗</span>
+          <span class="progress-counter" id="progress-counter">完了 0 / 0</span>
+        </div>
+        <div class="progress-bar-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" id="progress-bar-track">
+          <div class="progress-bar-fill" id="progress-bar-fill"></div>
+        </div>
+        <div class="celebration-banner" id="celebration-banner" hidden>
+          🎉 今日のタスクはすべて完了しました！お疲れさまです！
+        </div>
+      </div>
+
+      <!-- 画面下部：ステータス＆コントロールボタン群 -->
+      <div class="bottom-controls">
+        <div class="status-indicators">
+          <div class="status-badge" id="wakelock-status" title="Screen Wake Lock 状態">
+            <span class="status-dot" id="wakelock-dot"></span>
+            <span id="wakelock-text">Wake Lock: 待機中</span>
+          </div>
+          <div class="status-badge" id="sensor-status" title="照度センサー / 判定ソース">
+            <span class="status-dot" id="sensor-dot"></span>
+            <span id="sensor-text">照度: 確認中...</span>
+          </div>
+        </div>
+
+        <div class="action-buttons">
+          <button type="button" class="ctrl-btn" id="btn-theme-toggle" title="テーマ切替（自動 / 昼 / 夜）">
+            <span class="ctrl-icon" id="theme-btn-icon">🌓</span>
+            <span id="theme-btn-label">テーマ: 自動</span>
+          </button>
+          <button type="button" class="ctrl-btn" id="btn-manual-reset" title="今日の完了状態をすべて未完了に戻す">
+            <span class="ctrl-icon">🔄</span>
+            <span>手動リセット</span>
+          </button>
+          <button type="button" class="ctrl-btn ctrl-btn-primary" id="btn-open-editor" title="子ども人数・ゴミ曜日・タスクの設定">
+            <span class="ctrl-icon">⚙️</span>
+            <span>設定・タスク編集</span>
+          </button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- 右カラム（幅60%）：タスクパネルエリア -->
+    <main class="right-panel">
+      <!-- セクション1: 保育園の用意（子ども1〜4人全員分を同時表示） -->
+      <section class="task-category task-category-nursery" aria-labelledby="cat-nursery-title">
+        <header class="category-header">
+          <div class="category-title-wrap">
+            <h2 id="cat-nursery-title">🎒 保育園の用意</h2>
+            <span class="status-hint-label">タップ: 未完了 → 完了 → 不要</span>
+          </div>
+          <span class="category-badge" id="cat-nursery-count">0 / 0</span>
+        </header>
+        <div class="nursery-children-stack" id="grid-nursery"></div>
+      </section>
+
+      <!-- セクション2: 今日の家事・ゴミ出し -->
+      <section class="task-category task-category-chores" aria-labelledby="cat-chores-title">
+        <header class="category-header">
+          <div class="category-title-wrap">
+            <h2 id="cat-chores-title">🏠 今日の家事・ゴミ出し</h2>
+          </div>
+          <span class="category-badge" id="cat-chores-count">0 / 0</span>
+        </header>
+        <div class="task-grid" id="grid-chores"></div>
+      </section>
+    </main>
+  </div>
+
+  <!-- 手動リセット確認モーダル -->
+  <div class="modal-backdrop" id="reset-modal" hidden>
+    <div class="modal-dialog modal-sm" role="dialog" aria-modal="true" aria-labelledby="reset-modal-title">
+      <h3 class="modal-title" id="reset-modal-title">完了状態のリセット</h3>
+      <p class="modal-desc">今日のすべてのタスク（全子どもの保育園用意・家事）を「未完了」に戻しますか？<br><small>※「常時不要」に設定した項目はそのまま維持されます。</small></p>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn modal-btn-cancel" id="btn-cancel-reset">キャンセル</button>
+        <button type="button" class="modal-btn modal-btn-danger" id="btn-confirm-reset">リセットする</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 設定・タスク編集モーダル -->
+  <div class="modal-backdrop" id="editor-modal" hidden>
+    <div class="modal-dialog modal-lg" role="dialog" aria-modal="true" aria-labelledby="editor-modal-title">
+      <header class="modal-header">
+        <h3 class="modal-title" id="editor-modal-title">設定・タスク編集</h3>
+        <button type="button" class="modal-close-btn" id="btn-close-editor" aria-label="閉じる">✕</button>
+      </header>
+
+      <div class="modal-body">
+        <!-- 1. 保育園の用意：子ども人数（1〜4人）＆各子どもの設定 -->
+        <section class="settings-block">
+          <div class="settings-block-header">
+            <h4>👶 保育園の用意（子ども1〜4人設定・おむつ必要枚数）</h4>
+            <div class="child-count-selector">
+              <span>子どもの人数：</span>
+              <div class="count-btn-group" id="child-count-buttons">
+                <button type="button" class="count-btn" data-count="1">1人</button>
+                <button type="button" class="count-btn" data-count="2">2人</button>
+                <button type="button" class="count-btn" data-count="3">3人</button>
+                <button type="button" class="count-btn" data-count="4">4人</button>
+              </div>
+            </div>
+          </div>
+          <div class="children-config-grid" id="children-config-grid"></div>
+        </section>
+
+        <!-- 2. 燃えるごみ・不燃ごみの曜日設定＆前日表示 -->
+        <section class="settings-block">
+          <div class="settings-block-header">
+            <h4>🗑️ ゴミ出し曜日設定（前日からの事前表示対応）</h4>
+          </div>
+          <div class="garbage-config-list" id="garbage-config-list"></div>
+        </section>
+
+        <!-- 3. タスクの追加・一覧管理 -->
+        <section class="settings-block">
+          <div class="settings-block-header">
+            <h4>➕ タスク項目の追加・削除</h4>
+          </div>
+          <form id="add-task-form" class="add-task-form">
+            <div class="form-row">
+              <div class="form-group form-group-icon">
+                <label for="input-task-icon">アイコン</label>
+                <input type="text" id="input-task-icon" value="✨" maxlength="4" required>
+                <div class="emoji-presets" id="emoji-presets">
+                  <button type="button" class="emoji-chip" data-emoji="🌡️">🌡️</button>
+                  <button type="button" class="emoji-chip" data-emoji="🩲">🩲</button>
+                  <button type="button" class="emoji-chip" data-emoji="👕">👕</button>
+                  <button type="button" class="emoji-chip" data-emoji="🍼">🍼</button>
+                  <button type="button" class="emoji-chip" data-emoji="🛍️">🛍️</button>
+                  <button type="button" class="emoji-chip" data-emoji="🔥">🔥</button>
+                  <button type="button" class="emoji-chip" data-emoji="🥫">🥫</button>
+                  <button type="button" class="emoji-chip" data-emoji="♻️">♻️</button>
+                  <button type="button" class="emoji-chip" data-emoji="🍽️">🍽️</button>
+                  <button type="button" class="emoji-chip" data-emoji="🧺">🧺</button>
+                  <button type="button" class="emoji-chip" data-emoji="🛏️">🛏️</button>
+                  <button type="button" class="emoji-chip" data-emoji="🧹">🧹</button>
+                </div>
+              </div>
+
+              <div class="form-group form-group-title">
+                <label for="input-task-title">タスク名</label>
+                <input type="text" id="input-task-title" placeholder="例：帽子・カラー帽、連絡帳など" required maxlength="30">
+              </div>
+
+              <div class="form-group form-group-category">
+                <label for="input-task-category">追加先カテゴリ</label>
+                <select id="input-task-category">
+                  <option value="nursery">🎒 保育園の用意（全子ども共通）</option>
+                  <option value="chores">🏠 今日の家事・ゴミ出し</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="form-row form-row-days">
+              <div class="days-selector-wrap">
+                <span class="days-label">表示曜日：</span>
+                <button type="button" class="day-preset-btn active" id="btn-days-everyday">毎日</button>
+                <div class="day-checkboxes" id="day-checkboxes">
+                  <label class="day-chip"><input type="checkbox" value="1" checked><span>月</span></label>
+                  <label class="day-chip"><input type="checkbox" value="2" checked><span>火</span></label>
+                  <label class="day-chip"><input type="checkbox" value="3" checked><span>水</span></label>
+                  <label class="day-chip"><input type="checkbox" value="4" checked><span>木</span></label>
+                  <label class="day-chip"><input type="checkbox" value="5" checked><span>金</span></label>
+                  <label class="day-chip"><input type="checkbox" value="6" checked><span>土</span></label>
+                  <label class="day-chip"><input type="checkbox" value="0" checked><span>日</span></label>
+                </div>
+                <label class="prev-day-toggle-label">
+                  <input type="checkbox" id="input-task-show-prev-day">
+                  <span>前日も表示する</span>
+                </label>
+              </div>
+              <button type="submit" class="modal-btn modal-btn-primary">＋ 追加する</button>
+            </div>
+          </form>
+
+          <!-- 登録済みタスク一覧 -->
+          <div class="editor-lists-container">
+            <div class="editor-list-col">
+              <h5>🎒 保育園の用意（共通項目）</h5>
+              <ul class="editor-task-list" id="editor-list-nursery"></ul>
+            </div>
+            <div class="editor-list-col">
+              <h5>🏠 今日の家事・曜日タスク</h5>
+              <ul class="editor-task-list" id="editor-list-chores"></ul>
+            </div>
+          </div>
+        </section>
+      </div>
+
+      <footer class="modal-footer">
+        <button type="button" class="modal-btn modal-btn-subtle" id="btn-restore-defaults">初期サンプルに戻す</button>
+        <button type="button" class="modal-btn modal-btn-primary" id="btn-done-editor">完了</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="./app.js"></script>
+</body>
+</html>
