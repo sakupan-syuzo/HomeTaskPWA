@@ -38,6 +38,9 @@
   // 毎朝のリセット時刻（朝 4:00）
   const RESET_HOUR = 4;
 
+  // 無操作時に全画面時計スクリーンセーバーへ移行する時間（5分 = 300,000ms）
+  const IDLE_SCREENSAVER_MS = 5 * 60 * 1000;
+
   const DAY_NAMES = ['日', '月', '火', '水', '木', '金', '土'];
 
   // 初期データ生成関数
@@ -91,6 +94,11 @@
   // Wake Lock 状態
   let wakeLockSentinel = null;
 
+  // 5分無操作スクリーンセーバー状態＆誤操作防止ガード
+  let idleTimer = null;
+  let isScreensaverActive = false;
+  let wakeGuardUntil = 0;
+
   // ==========================================================================
   // DOM要素参照
   // ==========================================================================
@@ -108,6 +116,18 @@
     dateDisplay: document.getElementById('date-display'),
     clockHm: document.getElementById('clock-hm'),
     clockSec: document.getElementById('clock-sec'),
+    // 全画面時計スクリーンセーバー要素
+    screensaverOverlay: document.getElementById('screensaver-overlay'),
+    ssDateDisplay: document.getElementById('ss-date-display'),
+    ssAnalogWrap: document.getElementById('ss-analog-wrap'),
+    ssAnalogTicks: document.getElementById('ss-analog-ticks'),
+    ssAnalogNumbers: document.getElementById('ss-analog-numbers'),
+    ssAnalogHourHand: document.getElementById('ss-analog-hour-hand'),
+    ssAnalogMinHand: document.getElementById('ss-analog-min-hand'),
+    ssAnalogSecHand: document.getElementById('ss-analog-sec-hand'),
+    ssClockHm: document.getElementById('ss-clock-hm'),
+    ssClockSec: document.getElementById('ss-clock-sec'),
+    ssProgressPill: document.getElementById('ss-progress-pill'),
     progressCounter: document.getElementById('progress-counter'),
     progressBarTrack: document.getElementById('progress-bar-track'),
     progressBarFill: document.getElementById('progress-bar-fill'),
@@ -265,16 +285,16 @@
   // ==========================================================================
 
   /**
-   * アナログ時計の60分目盛りと1〜12の数字をSVG上に生成する
+   * アナログ時計の60分目盛りと1〜12の数字をSVG上に生成する（メイン＆全画面スクリーンセーバー両方）
    */
-  function initAnalogClockFace() {
-    if (!dom.analogTicks || !dom.analogNumbers) return;
+  function populateAnalogFaceGroup(ticksGroup, numbersGroup) {
+    if (!ticksGroup || !numbersGroup) return;
     const svgNS = 'http://www.w3.org/2000/svg';
     const cx = 130;
     const cy = 130;
 
-    dom.analogTicks.innerHTML = '';
-    dom.analogNumbers.innerHTML = '';
+    ticksGroup.innerHTML = '';
+    numbersGroup.innerHTML = '';
 
     for (let i = 0; i < 60; i++) {
       const angleDeg = i * 6;
@@ -295,7 +315,7 @@
       line.setAttribute('x2', x2.toFixed(2));
       line.setAttribute('y2', y2.toFixed(2));
       line.setAttribute('class', isMajor ? 'analog-tick-major' : 'analog-tick-minor');
-      dom.analogTicks.appendChild(line);
+      ticksGroup.appendChild(line);
     }
 
     for (let h = 1; h <= 12; h++) {
@@ -311,8 +331,13 @@
       text.setAttribute('y', ny.toFixed(2));
       text.setAttribute('class', 'analog-number');
       text.textContent = String(h);
-      dom.analogNumbers.appendChild(text);
+      numbersGroup.appendChild(text);
     }
+  }
+
+  function initAnalogClockFace() {
+    populateAnalogFaceGroup(dom.analogTicks, dom.analogNumbers);
+    populateAnalogFaceGroup(dom.ssAnalogTicks, dom.ssAnalogNumbers);
   }
 
   /**
@@ -324,6 +349,11 @@
     dom.analogClockWrap.hidden = !isAnalog;
     if (dom.clockStylePill) {
       dom.clockStylePill.textContent = isAnalog ? '🕰️ アナログ (タップで切替)' : '🔢 デジタル (タップで切替)';
+    }
+
+    if (dom.screensaverOverlay && dom.ssAnalogWrap) {
+      dom.screensaverOverlay.classList.toggle('is-analog', isAnalog);
+      dom.ssAnalogWrap.hidden = !isAnalog;
     }
   }
 
@@ -350,6 +380,11 @@
     dom.clockHm.textContent = `${hours}:${minutes}`;
     dom.clockSec.textContent = seconds;
 
+    if (dom.ssClockHm) {
+      dom.ssClockHm.textContent = `${hours}:${minutes}`;
+      dom.ssClockSec.textContent = seconds;
+    }
+
     // アナログ時計の針の角度を更新
     const secDeg = s * 6;
     const minDeg = m * 6 + s * 0.1;
@@ -361,10 +396,20 @@
       dom.analogSecHand.setAttribute('transform', `rotate(${secDeg} 130 130)`);
     }
 
+    if (dom.ssAnalogHourHand) {
+      dom.ssAnalogHourHand.setAttribute('transform', `rotate(${hourDeg} 130 130)`);
+      dom.ssAnalogMinHand.setAttribute('transform', `rotate(${minDeg} 130 130)`);
+      dom.ssAnalogSecHand.setAttribute('transform', `rotate(${secDeg} 130 130)`);
+    }
+
     const month = now.getMonth() + 1;
     const date = now.getDate();
     const dayOfWeek = now.getDay();
-    dom.dateDisplay.textContent = `${month}月${date}日 (${DAY_NAMES[dayOfWeek]})`;
+    const dateStr = `${month}月${date}日 (${DAY_NAMES[dayOfWeek]})`;
+    dom.dateDisplay.textContent = dateStr;
+    if (dom.ssDateDisplay) {
+      dom.ssDateDisplay.textContent = dateStr;
+    }
 
     // 朝4:00の自動リセット判定
     checkAndPerformAutoReset(now);
@@ -1033,9 +1078,16 @@
 
     const percent = totalRequired > 0 ? Math.round((totalDone / totalRequired) * 100) : 100;
 
-    dom.progressCounter.textContent = totalSkipped > 0
+    const counterText = totalSkipped > 0
       ? `完了 ${totalDone} / ${totalRequired} (不要 ${totalSkipped})`
       : `完了 ${totalDone} / ${totalRequired}`;
+
+    dom.progressCounter.textContent = counterText;
+    if (dom.ssProgressPill) {
+      dom.ssProgressPill.textContent = totalRequired > 0 && totalDone === totalRequired
+        ? '🎉 今日のタスクはすべて完了！'
+        : `今日のタスク ${counterText}`;
+    }
 
     dom.progressBarFill.style.width = `${totalRequired > 0 ? percent : 0}%`;
     dom.progressBarTrack.setAttribute('aria-valuenow', String(percent));
@@ -1421,6 +1473,77 @@
     });
   }
 
+  // ==========================================================================
+  // 9. 5分無操作時の全画面時計スクリーンセーバー＆復帰時の誤操作防止ガード
+  // ==========================================================================
+
+  function enterScreensaver() {
+    if (isScreensaverActive) return;
+    isScreensaverActive = true;
+    if (dom.screensaverOverlay) {
+      dom.screensaverOverlay.hidden = false;
+    }
+  }
+
+  function wakeFromScreensaver() {
+    if (!isScreensaverActive) return;
+    isScreensaverActive = false;
+    // 復帰タップの直後450ms間は背後のボタン・カードへのclick等の突き抜けを完全にブロック
+    wakeGuardUntil = Date.now() + 450;
+    if (dom.screensaverOverlay) {
+      dom.screensaverOverlay.hidden = true;
+    }
+    resetIdleTimer();
+  }
+
+  function resetIdleTimer() {
+    clearTimeout(idleTimer);
+    if (!isScreensaverActive) {
+      idleTimer = setTimeout(enterScreensaver, IDLE_SCREENSAVER_MS);
+    }
+  }
+
+  function setupIdleScreensaver() {
+    if (!dom.screensaverOverlay) return;
+
+    // スクリーンセーバー表示中のタップ：操作画面に戻すだけで、他の一切の操作を受け付けない
+    const consumeAndWake = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.stopImmediatePropagation();
+      wakeFromScreensaver();
+    };
+
+    dom.screensaverOverlay.addEventListener('pointerdown', consumeAndWake, { capture: true });
+    dom.screensaverOverlay.addEventListener('touchstart', consumeAndWake, { capture: true, passive: false });
+    dom.screensaverOverlay.addEventListener('click', consumeAndWake, { capture: true });
+
+    // キャプチャフェーズでの誤操作防止ガード（スクリーンセーバー中、または復帰直後450ms以内のイベントを完全遮断）
+    const captureGuard = (e) => {
+      if (isScreensaverActive) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        wakeFromScreensaver();
+        return;
+      }
+      if (Date.now() < wakeGuardUntil) {
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+        return;
+      }
+      // 通常の操作時は5分無操作タイマーをリセット
+      resetIdleTimer();
+    };
+
+    ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'mouseup', 'click', 'keydown'].forEach((evtName) => {
+      window.addEventListener(evtName, captureGuard, { capture: true, passive: false });
+    });
+
+    resetIdleTimer();
+  }
+
   // PWA インストールプロンプト制御（Chrome / Android / Edge 対応）
   let deferredInstallPrompt = null;
 
@@ -1471,6 +1594,7 @@
     initAnalogClockFace();
     applyClockStyleUI();
     bindEvents();
+    setupIdleScreensaver();
     setupPwaInstallPrompt();
     initAmbientLightSensor();
     updateClockAndSchedule();

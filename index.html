@@ -248,6 +248,40 @@
     </div>
   </div>
 
+  <!-- 5分無操作時の全画面時計スクリーンセーバー（タップで操作画面に復帰・誤操作防止ガード付き） -->
+  <div class="screensaver-overlay" id="screensaver-overlay" hidden aria-label="全画面時計モード（タップで操作画面に戻る）">
+    <div class="screensaver-content">
+      <div class="screensaver-date" id="ss-date-display">--月--日 (-)</div>
+
+      <div class="screensaver-clock-body">
+        <!-- アナログ時計（大） -->
+        <div class="ss-analog-wrap" id="ss-analog-wrap">
+          <svg class="ss-analog-svg" viewBox="0 0 260 260" aria-hidden="true">
+            <circle class="analog-face" cx="130" cy="130" r="122" />
+            <g id="ss-analog-ticks"></g>
+            <g id="ss-analog-numbers"></g>
+            <line id="ss-analog-hour-hand" class="analog-hand analog-hour" x1="130" y1="142" x2="130" y2="62" />
+            <line id="ss-analog-min-hand" class="analog-hand analog-min" x1="130" y1="146" x2="130" y2="36" />
+            <line id="ss-analog-sec-hand" class="analog-hand analog-sec" x1="130" y1="154" x2="130" y2="28" />
+            <circle class="analog-center-outer" cx="130" cy="130" r="6" />
+            <circle class="analog-center-inner" cx="130" cy="130" r="2.5" />
+          </svg>
+        </div>
+
+        <!-- デジタル時計（大） -->
+        <div class="ss-digital-wrap" id="ss-digital-wrap">
+          <span class="ss-clock-hm" id="ss-clock-hm">00:00</span>
+          <span class="ss-clock-sec" id="ss-clock-sec">00</span>
+        </div>
+      </div>
+
+      <div class="screensaver-footer">
+        <span class="ss-progress-pill" id="ss-progress-pill">今日のタスク 完了 0 / 0</span>
+        <span class="ss-wake-hint">画面をタップしてタスクボードを表示</span>
+      </div>
+    </div>
+  </div>
+
   <script src="./app.js"></script>
 </body>
 </html>
