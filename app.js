@@ -116,6 +116,7 @@
     wakelockText: document.getElementById('wakelock-text'),
     sensorDot: document.getElementById('sensor-dot'),
     sensorText: document.getElementById('sensor-text'),
+    btnInstallPwa: document.getElementById('btn-install-pwa'),
     btnThemeToggle: document.getElementById('btn-theme-toggle'),
     themeBtnIcon: document.getElementById('theme-btn-icon'),
     themeBtnLabel: document.getElementById('theme-btn-label'),
@@ -943,19 +944,23 @@
     const circleSymbol = status === 'done' ? '✓' : status === 'skip' ? '不要' : '';
     const statusLabelText = status === 'done' ? 'やった' : status === 'skip' ? '不要' : '未完了';
 
+    const bottomRowHtml = (diaperHtml || metaRowHtml)
+      ? `<div class="task-card-bottom">
+          ${diaperHtml}
+          ${metaRowHtml}
+        </div>`
+      : '';
+
     card.innerHTML = `
-      <span class="task-icon" aria-hidden="true">${escapeHtml(icon)}</span>
-      <div class="task-info">
-        <div class="task-title-row">
-          <span class="task-title">${escapeHtml(title)}</span>
+      <div class="task-card-top">
+        <span class="task-icon" aria-hidden="true">${escapeHtml(icon)}</span>
+        <span class="task-title">${escapeHtml(title)}</span>
+        <div class="task-status-indicator" aria-hidden="true">
+          <span class="task-check-circle">${escapeHtml(circleSymbol)}</span>
+          <span class="task-status-label">${escapeHtml(statusLabelText)}</span>
         </div>
-        ${diaperHtml}
-        ${metaRowHtml}
       </div>
-      <div class="task-status-indicator" aria-hidden="true">
-        <span class="task-check-circle">${escapeHtml(circleSymbol)}</span>
-        <span class="task-status-label">${escapeHtml(statusLabelText)}</span>
-      </div>
+      ${bottomRowHtml}
     `;
 
     // おむつ枚数の「−」「＋」ボタンタップ時はカードの状態切替を発火させない
@@ -1416,6 +1421,38 @@
     });
   }
 
+  // PWA インストールプロンプト制御（Chrome / Android / Edge 対応）
+  let deferredInstallPrompt = null;
+
+  function setupPwaInstallPrompt() {
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredInstallPrompt = e;
+      if (dom.btnInstallPwa) {
+        dom.btnInstallPwa.hidden = false;
+      }
+    });
+
+    if (dom.btnInstallPwa) {
+      dom.btnInstallPwa.addEventListener('click', async () => {
+        if (!deferredInstallPrompt) return;
+        deferredInstallPrompt.prompt();
+        const { outcome } = await deferredInstallPrompt.userChoice;
+        if (outcome === 'accepted') {
+          dom.btnInstallPwa.hidden = true;
+        }
+        deferredInstallPrompt = null;
+      });
+    }
+
+    window.addEventListener('appinstalled', () => {
+      deferredInstallPrompt = null;
+      if (dom.btnInstallPwa) {
+        dom.btnInstallPwa.hidden = true;
+      }
+    });
+  }
+
   function registerServiceWorker() {
     if ('serviceWorker' in navigator) {
       window.addEventListener('load', () => {
@@ -1434,6 +1471,7 @@
     initAnalogClockFace();
     applyClockStyleUI();
     bindEvents();
+    setupPwaInstallPrompt();
     initAmbientLightSensor();
     updateClockAndSchedule();
     renderAll();

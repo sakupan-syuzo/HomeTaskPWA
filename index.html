@@ -5,8 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <meta name="theme-color" content="#fdfbf7" id="meta-theme-color">
   <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <title>ファミリータスク＆置時計ボード</title>
+  <link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+  <link rel="icon" type="image/svg+xml" href="./icon.svg">
+  <link rel="apple-touch-icon" sizes="192x192" href="./icon-192.png">
   <link rel="manifest" href="./manifest.json">
   <link rel="stylesheet" href="./style.css">
 </head>
@@ -66,6 +70,9 @@
             <span class="status-dot" id="sensor-dot"></span>
             <span id="sensor-text">照度: 確認中...</span>
           </div>
+          <button type="button" class="install-pwa-btn" id="btn-install-pwa" hidden title="ホーム画面にPWAとしてインストール">
+            📲 アプリをインストール
+          </button>
         </div>
 
         <div class="action-buttons">
