@@ -401,6 +401,20 @@ select {
   color: var(--text-secondary);
 }
 
+.status-badge-clickable {
+  cursor: pointer;
+  transition: background-color 0.2s ease, border-color 0.2s ease;
+}
+
+.status-badge-clickable:hover {
+  background-color: var(--bg-card-hover);
+  border-color: var(--border-card-active);
+}
+
+.status-badge-clickable:active {
+  transform: scale(0.98);
+}
+
 .status-dot {
   width: 8px;
   height: 8px;
@@ -940,6 +954,46 @@ select {
   color: var(--text-secondary);
   font-size: 0.96rem;
   line-height: 1.55;
+}
+
+.time-picker-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: 20px 0;
+}
+
+.time-picker-label {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: var(--text-secondary);
+}
+
+.time-input {
+  width: 70px;
+  padding: 10px;
+  font-size: 1.2rem;
+  text-align: center;
+  border: 2px solid var(--border-card);
+  border-radius: 8px;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+}
+
+.time-input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+}
+
+.time-separator {
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: var(--text-primary);
+  margin-top: 20px;
 }
 
 .modal-close-btn {
