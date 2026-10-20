@@ -122,6 +122,21 @@ select {
   color: inherit;
 }
 
+.test-mode-badge {
+  position: fixed;
+  top: 10px;
+  right: 10px;
+  padding: 8px 16px;
+  background-color: #dc2626;
+  color: #ffffff;
+  font-size: 0.9rem;
+  font-weight: bold;
+  border-radius: 6px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+  z-index: 9999;
+  pointer-events: none;
+}
+
 /* ==========================================================================
    メイン2カラムレイアウト（左40% : 右60%）
    ========================================================================== */
@@ -573,8 +588,18 @@ select {
 }
 
 .nursery-children-stack::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 10px;
+}
+
+.nursery-children-stack::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.nursery-children-stack::-webkit-scrollbar-thumb {
+  background-color: var(--text-muted);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 .child-row-block {
@@ -645,8 +670,18 @@ select {
 }
 
 .task-grid::-webkit-scrollbar {
-  width: 0;
-  height: 0;
+  width: 10px;
+}
+
+.task-grid::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.task-grid::-webkit-scrollbar-thumb {
+  background-color: var(--text-muted);
+  border-radius: 5px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 /* タスクパネル（上段：アイコン＋タイトル＋状態丸 / 下段：オムツ枚数や曜日タグ） */
@@ -1229,16 +1264,25 @@ select {
   border-radius: 12px;
   padding: 10px 14px;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.garbage-warning {
+  font-size: 0.8rem;
+  color: var(--accent-danger);
+  font-weight: 600;
+  margin: 0;
+  padding: 6px 8px;
+  background-color: rgba(220, 38, 38, 0.1);
+  border-radius: 6px;
 }
 
 .garbage-item-title {
   font-size: 0.92rem;
   font-weight: 800;
   min-width: 130px;
+  margin-bottom: 8px;
 }
 
 .garbage-item-controls {
@@ -1246,6 +1290,7 @@ select {
   align-items: center;
   gap: 12px;
   flex-wrap: wrap;
+  width: 100%;
 }
 
 .prev-day-toggle-label {
@@ -1454,6 +1499,24 @@ select {
   color: var(--text-muted);
 }
 
+.editor-task-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editor-task-toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.editor-task-toggle input[type="checkbox"] {
+  cursor: pointer;
+}
+
 .editor-delete-btn {
   padding: 3px 9px;
   border-radius: 7px;
@@ -1589,5 +1652,143 @@ select {
   font-weight: 600;
   color: var(--text-muted);
   letter-spacing: 0.04em;
+}
+
+/* ==========================================================================
+   おむつ枚数入力パネル
+   ========================================================================== */
+
+.diaper-input-dialog {
+  max-width: 480px;
+}
+
+.diaper-input-buttons {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 16px 0;
+}
+
+.diaper-input-btn {
+  min-width: 48px;
+  min-height: 48px;
+  padding: 12px;
+  font-size: 1.2rem;
+  font-weight: 700;
+  background-color: var(--bg-card);
+  color: var(--text-primary);
+  border: 2px solid var(--border-card);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  user-select: none;
+}
+
+.diaper-input-btn:hover {
+  background-color: var(--accent-primary-soft);
+  border-color: var(--accent-primary);
+  transform: translateY(-1px);
+}
+
+.diaper-input-btn:active {
+  transform: translateY(0);
+}
+
+/* ==========================================================================
+   おむつカードの表示スタイル
+   ========================================================================== */
+
+.diaper-input-wrap {
+  padding: 8px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  font-weight: 600;
+}
+
+.diaper-input-wrap:hover {
+  opacity: 0.85;
+}
+
+.diaper-not-entered {
+  background-color: var(--accent-danger);
+  color: #ffffff;
+}
+
+.diaper-zero {
+  background-color: var(--bg-card-skipped);
+  color: var(--text-muted);
+}
+
+.diaper-entered {
+  background-color: var(--accent-info-soft);
+  color: var(--accent-info);
+}
+
+.diaper-input-text {
+  font-size: 0.95rem;
+}
+
+/* ==========================================================================
+   おむつの戻り時刻設定
+   ========================================================================== */
+
+.time-config-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.time-config-row label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.time-input {
+  width: 60px;
+  padding: 6px 8px;
+  font-size: 1rem;
+  border: 1px solid var(--border-subtle);
+  border-radius: 4px;
+  text-align: center;
+}
+
+.time-separator {
+  font-size: 1.2rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.btn-save-time-config {
+  padding: 8px 16px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  background-color: var(--accent-primary);
+  color: #ffffff;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-save-time-config:hover {
+  background-color: #b45309;
+  transform: translateY(-1px);
+}
+
+.btn-save-time-config:active {
+  transform: translateY(0);
+}
+
+/* ==========================================================================
+   夜間モード：スクロールバーの色調整
+   ========================================================================== */
+
+[data-theme="dark"] .nursery-children-stack::-webkit-scrollbar-thumb,
+[data-theme="dark"] .task-grid::-webkit-scrollbar-thumb {
+  background-color: var(--border-card);
 }
 
