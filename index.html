@@ -70,6 +70,10 @@
             <span class="status-dot" id="sensor-dot"></span>
             <span id="sensor-text">照度: 確認中...</span>
           </div>
+          <div class="status-badge status-badge-clickable" id="auto-reset-status" title="タップして自動リセットのON/OFFを切り替え">
+            <span class="status-dot" id="auto-reset-dot"></span>
+            <span id="auto-reset-text">自動リセット: ON (4:00)</span>
+          </div>
           <button type="button" class="install-pwa-btn" id="btn-install-pwa" hidden title="ホーム画面にPWAとしてインストール">
             📲 アプリをインストール
           </button>
@@ -122,6 +126,29 @@
         <div class="task-grid" id="grid-chores"></div>
       </section>
     </main>
+  </div>
+
+  <!-- 自動リセット設定モーダル -->
+  <div class="modal-backdrop" id="auto-reset-config-modal" hidden>
+    <div class="modal-dialog modal-sm" role="dialog" aria-modal="true" aria-labelledby="auto-reset-config-title">
+      <h3 class="modal-title" id="auto-reset-config-title">自動リセット時刻設定</h3>
+      <p class="modal-desc">毎日自動的にタスクをリセットする時刻を設定してください。</p>
+      <div class="time-picker-row">
+        <label class="time-picker-label">
+          <span>時</span>
+          <input type="number" id="auto-reset-hour-input" min="0" max="23" value="4" class="time-input">
+        </label>
+        <span class="time-separator">:</span>
+        <label class="time-picker-label">
+          <span>分</span>
+          <input type="number" id="auto-reset-minute-input" min="0" max="59" value="0" class="time-input">
+        </label>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn modal-btn-cancel" id="btn-cancel-auto-reset-config">キャンセル</button>
+        <button type="button" class="modal-btn modal-btn-primary" id="btn-save-auto-reset-config">ONにする</button>
+      </div>
+    </div>
   </div>
 
   <!-- 手動リセット確認モーダル -->
