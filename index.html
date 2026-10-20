@@ -15,6 +15,7 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
+  <div class="test-mode-badge" id="test-mode-badge" hidden>TEST MODE</div>
   <div class="dashboard">
     <!-- 左カラム（幅40%）：時計＆ステータスエリア -->
     <aside class="left-panel">
@@ -128,11 +129,11 @@
     </main>
   </div>
 
-  <!-- 自動リセット設定モーダル -->
+  <!-- 日付の区切り時刻設定モーダル -->
   <div class="modal-backdrop" id="auto-reset-config-modal" hidden>
     <div class="modal-dialog modal-sm" role="dialog" aria-modal="true" aria-labelledby="auto-reset-config-title">
-      <h3 class="modal-title" id="auto-reset-config-title">自動リセット時刻設定</h3>
-      <p class="modal-desc">毎日自動的にタスクをリセットする時刻を設定してください。</p>
+      <h3 class="modal-title" id="auto-reset-config-title">日付の区切り時刻設定</h3>
+      <p class="modal-desc">1日の区切りとする時刻を設定してください。この時刻で論理的な日付が切り替わります。</p>
       <div class="time-picker-row">
         <label class="time-picker-label">
           <span>時</span>
@@ -146,7 +147,7 @@
       </div>
       <div class="modal-actions">
         <button type="button" class="modal-btn modal-btn-cancel" id="btn-cancel-auto-reset-config">キャンセル</button>
-        <button type="button" class="modal-btn modal-btn-primary" id="btn-save-auto-reset-config">ONにする</button>
+        <button type="button" class="modal-btn modal-btn-primary" id="btn-save-auto-reset-config">保存</button>
       </div>
     </div>
   </div>
@@ -159,6 +160,17 @@
       <div class="modal-actions">
         <button type="button" class="modal-btn modal-btn-cancel" id="btn-cancel-reset">キャンセル</button>
         <button type="button" class="modal-btn modal-btn-danger" id="btn-confirm-reset">リセットする</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- おむつ枚数入力パネル -->
+  <div class="modal-backdrop" id="diaper-input-modal" hidden>
+    <div class="modal-dialog modal-sm diaper-input-dialog" role="dialog" aria-modal="true" aria-labelledby="diaper-input-title">
+      <h3 class="modal-title" id="diaper-input-title">おむつ枚数を入力</h3>
+      <div class="diaper-input-buttons" id="diaper-input-buttons"></div>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn modal-btn-cancel" id="btn-cancel-diaper-input">キャンセル</button>
       </div>
     </div>
   </div>
@@ -196,6 +208,26 @@
             <h4>🗑️ ゴミ出し曜日設定（前日からの事前表示対応）</h4>
           </div>
           <div class="garbage-config-list" id="garbage-config-list"></div>
+        </section>
+
+        <!-- 2-2. おむつの戻り時刻設定 -->
+        <section class="settings-block">
+          <div class="settings-block-header">
+            <h4>🩲 おむつの戻り時刻</h4>
+            <p class="settings-block-desc">保育園からの帰宅時刻を設定してください。入力した枚数は、次の戻り時刻まで有効です。</p>
+          </div>
+          <div class="time-config-row">
+            <label>
+              <span>時</span>
+              <input type="number" id="diaper-return-hour-input" class="time-input" min="0" max="23" value="15">
+            </label>
+            <span class="time-separator">:</span>
+            <label>
+              <span>分</span>
+              <input type="number" id="diaper-return-minute-input" class="time-input" min="0" max="59" value="0">
+            </label>
+            <button type="button" class="btn-save-time-config" id="btn-save-diaper-return-time">保存</button>
+          </div>
         </section>
 
         <!-- 3. タスクの追加・一覧管理 -->
@@ -254,6 +286,10 @@
                 <label class="prev-day-toggle-label">
                   <input type="checkbox" id="input-task-show-prev-day">
                   <span>前日も表示する</span>
+                </label>
+                <label class="prev-day-toggle-label">
+                  <input type="checkbox" id="input-task-carry-over">
+                  <span>前日のチェックを引き継ぐ</span>
                 </label>
               </div>
               <button type="submit" class="modal-btn modal-btn-primary">＋ 追加する</button>
