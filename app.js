@@ -19,7 +19,8 @@
   const STORAGE_KEYS = {
     STATE_V2: 'hometask_state_v2',
     THEME_MODE: 'hometask_theme_mode_v1',
-    LAST_RESET_LOGICAL_DATE: 'hometask_last_reset_date_v1'
+    LAST_RESET_LOGICAL_DATE: 'hometask_last_reset_date_v1',
+    AUTO_RESET_CONFIG: 'hometask_auto_reset_config_v1'
   };
 
   // 照度センサー（AmbientLightSensor）のヒステリシス設定
@@ -84,6 +85,13 @@
   let themeMode = 'auto'; // 'auto' | 'light' | 'dark'
   let currentRenderedDayOfWeek = null;
 
+  // 自動リセット設定
+  let autoResetConfig = {
+    enabled: true,
+    hour: 4,
+    minute: 0
+  };
+
   // 照度センサー＆テーマ制御用状態
   let sensorActive = false;
   let currentLux = null;
@@ -136,6 +144,9 @@
     wakelockText: document.getElementById('wakelock-text'),
     sensorDot: document.getElementById('sensor-dot'),
     sensorText: document.getElementById('sensor-text'),
+    autoResetStatus: document.getElementById('auto-reset-status'),
+    autoResetDot: document.getElementById('auto-reset-dot'),
+    autoResetText: document.getElementById('auto-reset-text'),
     btnInstallPwa: document.getElementById('btn-install-pwa'),
     btnFullscreenClock: document.getElementById('btn-fullscreen-clock'),
     btnThemeToggle: document.getElementById('btn-theme-toggle'),
@@ -148,6 +159,12 @@
     gridChores: document.getElementById('grid-chores'),
     catNurseryCount: document.getElementById('cat-nursery-count'),
     catChoresCount: document.getElementById('cat-chores-count'),
+    // 自動リセット設定モーダル
+    autoResetConfigModal: document.getElementById('auto-reset-config-modal'),
+    autoResetHourInput: document.getElementById('auto-reset-hour-input'),
+    autoResetMinuteInput: document.getElementById('auto-reset-minute-input'),
+    btnCancelAutoResetConfig: document.getElementById('btn-cancel-auto-reset-config'),
+    btnSaveAutoResetConfig: document.getElementById('btn-save-auto-reset-config'),
     // リセット確認モーダル
     resetModal: document.getElementById('reset-modal'),
     btnCancelReset: document.getElementById('btn-cancel-reset'),
@@ -177,10 +194,13 @@
   // ==========================================================================
 
   /**
-   * 朝4:00を1日の区切りとした「論理日付 (YYYY-MM-DD)」を返す
+   * 設定されたリセット時刻を1日の区切りとした「論理日付 (YYYY-MM-DD)」を返す
    */
   function getLogicalDateString(now = new Date()) {
-    const shifted = new Date(now.getTime() - RESET_HOUR * 60 * 60 * 1000);
+    const resetHour = autoResetConfig.enabled ? autoResetConfig.hour : RESET_HOUR;
+    const resetMinute = autoResetConfig.enabled ? autoResetConfig.minute : 0;
+    const shiftMs = resetHour * 60 * 60 * 1000 + resetMinute * 60 * 1000;
+    const shifted = new Date(now.getTime() - shiftMs);
     const y = shifted.getFullYear();
     const m = String(shifted.getMonth() + 1).padStart(2, '0');
     const d = String(shifted.getDate()).padStart(2, '0');
@@ -201,9 +221,14 @@
   }
 
   /**
-   * 朝4:00を跨いでいた場合、全タスクの完了/不要状態をリセットする
+   * 設定されたリセット時刻を跨いでいた場合、全タスクの完了/不要状態をリセットする
    */
   function checkAndPerformAutoReset(now = new Date()) {
+    // 自動リセットが無効の場合は何もしない
+    if (!autoResetConfig.enabled) {
+      return false;
+    }
+
     const currentLogicalDate = getLogicalDateString(now);
     const lastResetDate = localStorage.getItem(STORAGE_KEYS.LAST_RESET_LOGICAL_DATE);
 
@@ -282,6 +307,30 @@
       localStorage.setItem(STORAGE_KEYS.THEME_MODE, themeMode);
     } catch (e) {
       console.error('テーマ設定の保存に失敗しました:', e);
+    }
+  }
+
+  function loadAutoResetConfig() {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEYS.AUTO_RESET_CONFIG);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        autoResetConfig = {
+          enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+          hour: typeof parsed.hour === 'number' ? parsed.hour : 4,
+          minute: typeof parsed.minute === 'number' ? parsed.minute : 0
+        };
+      }
+    } catch (e) {
+      console.warn('自動リセット設定の読み込みに失敗しました:', e);
+    }
+  }
+
+  function saveAutoResetConfig() {
+    try {
+      localStorage.setItem(STORAGE_KEYS.AUTO_RESET_CONFIG, JSON.stringify(autoResetConfig));
+    } catch (e) {
+      console.error('自動リセット設定の保存に失敗しました:', e);
     }
   }
 
@@ -531,6 +580,7 @@
 
     updateThemeToggleButtonUI();
     updateSensorStatusBadge(now);
+    updateAutoResetStatusBadge();
   }
 
   function updateThemeToggleButtonUI() {
@@ -549,19 +599,31 @@
   function updateSensorStatusBadge(now = new Date()) {
     if (sensorActive && currentLux !== null) {
       dom.sensorDot.className = 'status-dot active';
-      const luxModeLabel = sensorDarkState ? '暗室' : '明室';
-      dom.sensorText.textContent = `照度: ${currentLux} lx (${luxModeLabel})`;
+      dom.sensorText.textContent = `テーマ: 輝度優先 (${currentLux} lx)`;
     } else {
       dom.sensorDot.className = 'status-dot warn';
       const inNight = isNightTimeWindow(now);
       const osDark = osDarkMediaQuery.matches;
       if (inNight) {
-        dom.sensorText.textContent = '自動判定: 夜間時間帯 (21-6時)';
+        dom.sensorText.textContent = 'テーマ: 時間優先';
       } else if (osDark) {
-        dom.sensorText.textContent = '自動判定: OSダーク連動';
+        dom.sensorText.textContent = 'テーマ: OS優先';
       } else {
-        dom.sensorText.textContent = '自動判定: OS/時間帯連動';
+        dom.sensorText.textContent = 'テーマ: OS/時間優先';
       }
+    }
+  }
+
+  function updateAutoResetStatusBadge() {
+    if (!dom.autoResetDot || !dom.autoResetText) return;
+
+    if (autoResetConfig.enabled) {
+      dom.autoResetDot.className = 'status-dot active';
+      const timeStr = `${String(autoResetConfig.hour).padStart(2, '0')}:${String(autoResetConfig.minute).padStart(2, '0')}`;
+      dom.autoResetText.textContent = `自動リセット: ON (${timeStr})`;
+    } else {
+      dom.autoResetDot.className = 'status-dot warn';
+      dom.autoResetText.textContent = '自動リセット: OFF';
     }
   }
 
@@ -1121,8 +1183,47 @@
   }
 
   // ==========================================================================
-  // 8. 設定・タスク編集モーダル（子ども0〜4人・項目別ON/OFF・おむつ枚数・ゴミ曜日）
+  // 8. 自動リセット設定＆手動リセット
   // ==========================================================================
+
+  function toggleAutoResetConfig() {
+    if (autoResetConfig.enabled) {
+      // ONからOFFへ
+      autoResetConfig.enabled = false;
+      saveAutoResetConfig();
+      updateAutoResetStatusBadge();
+    } else {
+      // OFFからONへ → 時刻設定モーダルを表示
+      openAutoResetConfigModal();
+    }
+  }
+
+  function openAutoResetConfigModal() {
+    dom.autoResetHourInput.value = autoResetConfig.hour;
+    dom.autoResetMinuteInput.value = autoResetConfig.minute;
+    dom.autoResetConfigModal.hidden = false;
+  }
+
+  function closeAutoResetConfigModal() {
+    dom.autoResetConfigModal.hidden = true;
+  }
+
+  function saveAutoResetConfigFromModal() {
+    const hour = parseInt(dom.autoResetHourInput.value, 10);
+    const minute = parseInt(dom.autoResetMinuteInput.value, 10);
+
+    if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
+      alert('有効な時刻を入力してください（時: 0-23、分: 0-59）');
+      return;
+    }
+
+    autoResetConfig.enabled = true;
+    autoResetConfig.hour = hour;
+    autoResetConfig.minute = minute;
+    saveAutoResetConfig();
+    updateAutoResetStatusBadge();
+    closeAutoResetConfigModal();
+  }
 
   function openResetModal() {
     dom.resetModal.hidden = false;
@@ -1448,6 +1549,16 @@
     // テーマ切替
     dom.btnThemeToggle.addEventListener('click', cycleThemeMode);
 
+    // 自動リセット設定トグル
+    if (dom.autoResetStatus) {
+      dom.autoResetStatus.addEventListener('click', toggleAutoResetConfig);
+    }
+    dom.btnCancelAutoResetConfig.addEventListener('click', closeAutoResetConfigModal);
+    dom.btnSaveAutoResetConfig.addEventListener('click', saveAutoResetConfigFromModal);
+    dom.autoResetConfigModal.addEventListener('click', (e) => {
+      if (e.target === dom.autoResetConfigModal) closeAutoResetConfigModal();
+    });
+
     // 手動リセット確認モーダル
     dom.btnManualReset.addEventListener('click', openResetModal);
     dom.btnCancelReset.addEventListener('click', closeResetModal);
@@ -1636,6 +1747,7 @@
   // ==========================================================================
   function init() {
     loadState();
+    loadAutoResetConfig();
     initAnalogClockFace();
     applyClockStyleUI();
     bindEvents();
