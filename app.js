@@ -3,11 +3,11 @@
  * Google Pixel Tablet（横向き・スタンド設置）向けPWA
  *
  * 【対応機能】
- * - 保育園の用意：子ども 1〜4人 対応（タブ切替・子ども別の進捗管理）
+ * - 子どもの用意：子ども 1〜4人 対応（子ども別の進捗管理）
  * - 3状態切替：「未完了 (todo)」→「完了/やった (done)」→「不要 (skip)」
- * - おむつ補充：子どもごとに「必要枚数」または「常時不要（卒おむつ等）」を設定＆カード上で直接枚数増減可能
+ * - おむつ補充：子どもごとに毎回枚数を入力する方式（戻り時刻まで有効）
  * - 燃えるごみ・不燃ごみ等の曜日指定＆「前日からの事前表示（明日バッジ付き）」対応
- * - 照度連動3段階ハイブリッド自動夜間モード、朝4時自動リセット、Screen Wake Lock API
+ * - 照度連動2段階自動夜間モード（照度センサー → 時間帯）、日付の区切り時刻設定、Screen Wake Lock API
  */
 
 (() => {
@@ -19,9 +19,70 @@
   const STORAGE_KEYS = {
     STATE_V2: 'hometask_state_v2',
     THEME_MODE: 'hometask_theme_mode_v1',
-    LAST_RESET_LOGICAL_DATE: 'hometask_last_reset_date_v1',
-    AUTO_RESET_CONFIG: 'hometask_auto_reset_config_v1'
+    AUTO_RESET_CONFIG: 'hometask_auto_reset_config_v1',
+    DIAPER_RETURN_TIME: 'hometask_diaper_return_time_v1'
   };
+
+  const STATE_VERSION = 4; // バージョン4: おむつの枚数管理を毎回入力方式に変更
+
+  // ==========================================================================
+  // テスト用時刻上書き（開発用）
+  // ==========================================================================
+  let testTimeOffset = null;
+  let testTimeBase = null;
+  let isTestMode = false;
+
+  (function initTestTime() {
+    const params = new URLSearchParams(window.location.search);
+    const nowParam = params.get('now');
+    const testReset = params.get('testreset');
+
+    if (nowParam) {
+      const parsedDate = new Date(nowParam);
+      if (!isNaN(parsedDate.getTime())) {
+        testTimeBase = parsedDate.getTime();
+        testTimeOffset = Date.now();
+        isTestMode = true;
+
+        // &testreset=1 が指定されている場合は test_ のデータを削除
+        if (testReset === '1') {
+          Object.keys(STORAGE_KEYS).forEach(key => {
+            const storageKey = STORAGE_KEYS[key];
+            localStorage.removeItem('test_' + storageKey);
+          });
+        }
+
+        // test_ のデータがない場合のみ、通常データをコピー
+        const hasTestData = Object.keys(STORAGE_KEYS).some(key => {
+          const storageKey = STORAGE_KEYS[key];
+          return localStorage.getItem('test_' + storageKey) !== null;
+        });
+
+        if (!hasTestData) {
+          // 通常データをtest_付きキーにコピー
+          Object.keys(STORAGE_KEYS).forEach(key => {
+            const storageKey = STORAGE_KEYS[key];
+            const value = localStorage.getItem(storageKey);
+            if (value !== null) {
+              localStorage.setItem('test_' + storageKey, value);
+            }
+          });
+        }
+      }
+    }
+  })();
+
+  function getCurrentTime() {
+    if (testTimeBase !== null && testTimeOffset !== null) {
+      const elapsed = Date.now() - testTimeOffset;
+      return new Date(testTimeBase + elapsed);
+    }
+    return new Date();
+  }
+
+  function getStorageKey(key) {
+    return isTestMode ? 'test_' + key : key;
+  }
 
   // 照度センサー（AmbientLightSensor）のヒステリシス設定
   const LUX_CONFIG = {
@@ -47,33 +108,38 @@
   // 初期データ生成関数
   function createDefaultAppState() {
     return {
+      version: STATE_VERSION,
       clockStyle: 'analog', // 'analog' | 'digital' （時計エリアタップでいつでも切替可）
       childCount: 1, // 1〜4人で増減可能
-      activeChildId: 1,
       children: [
-        { id: 1, name: '子ども1', diaperCount: 5, diaperNotNeeded: false, disabledTaskIds: [] },
-        { id: 2, name: '子ども2', diaperCount: 5, diaperNotNeeded: false, disabledTaskIds: [] },
-        { id: 3, name: '子ども3', diaperCount: 4, diaperNotNeeded: false, disabledTaskIds: [] },
-        { id: 4, name: '子ども4', diaperCount: 4, diaperNotNeeded: false, disabledTaskIds: [] }
+        { id: 1, name: '子ども1', disabledTaskIds: [] },
+        { id: 2, name: '子ども2', disabledTaskIds: [] },
+        { id: 3, name: '子ども3', disabledTaskIds: [] },
+        { id: 4, name: '子ども4', disabledTaskIds: [] }
       ],
-      // 🎒 保育園の用意（各子どもに対して評価される項目）
-      // childStates: { "1": "todo" | "done" | "skip", "2": ... }
+      // 🎒 子どもの用意（各子どもに対して評価される項目）
+      // childStates: { "1": { value: 'done' | 'skip', forDate: 'YYYY-MM-DD', phase?: 'prev' }, ... }
+      // おむつタスク (isDiaper: true) の場合：
+      // childStates: { "1": { value: 'done' | 'skip' | 'todo', count: number, inputTimestamp: number }, ... }
+      // - count: 入力した枚数（undefined = 未入力）
+      // - inputTimestamp: 入力した時刻（ミリ秒）
+      // - value: 状態（count===0なら自動で'skip'）
       nurseryTasks: [
-        { id: 'nursery-1', icon: '🌡️', title: '検温・連絡帳の記入', isDiaper: false, days: 'everyday', showPrevDay: false, childStates: {} },
-        { id: 'nursery-2', icon: '🩲', title: 'オムツ補充', isDiaper: true, days: 'everyday', showPrevDay: false, childStates: {} },
-        { id: 'nursery-3', icon: '👕', title: '着替え・エプロン', isDiaper: false, days: 'everyday', showPrevDay: false, childStates: {} },
-        { id: 'nursery-4', icon: '🍼', title: '水筒の準備', isDiaper: false, days: 'everyday', showPrevDay: false, childStates: {} },
-        { id: 'nursery-5', icon: '🛍️', title: '汚れ物袋', isDiaper: false, days: 'everyday', showPrevDay: false, childStates: {} }
+        { id: 'nursery-1', icon: '🌡️', title: '検温・連絡帳の記入', isDiaper: false, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, childStates: {} },
+        { id: 'nursery-2', icon: '🩲', title: 'オムツ補充', isDiaper: true, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, childStates: {} },
+        { id: 'nursery-3', icon: '👕', title: '着替え・エプロン', isDiaper: false, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, childStates: {} },
+        { id: 'nursery-4', icon: '🍼', title: '水筒の準備', isDiaper: false, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, childStates: {} },
+        { id: 'nursery-5', icon: '🛍️', title: '汚れ物袋', isDiaper: false, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, childStates: {} }
       ],
-      // 🏠 今日の家事・ゴミ出し（燃えるごみ・不燃ごみは曜日指定＆前日表示ONがデフォルト）
-      // status: "todo" | "done" | "skip"
+      // 🏠 今日の家事・ゴミ出し
+      // status: { value: 'done' | 'skip', forDate: 'YYYY-MM-DD', phase?: 'prev' } または null
       choresTasks: [
-        { id: 'garbage-burnable', icon: '🔥', title: '燃えるゴミ出し', isGarbageConfig: true, days: [2, 5], showPrevDay: true, status: 'todo' },
-        { id: 'garbage-nonburnable', icon: '🥫', title: '不燃ごみ出し', isGarbageConfig: true, days: [4], showPrevDay: true, status: 'todo' },
-        { id: 'garbage-resource', icon: '♻️', title: '資源ごみ', isGarbageConfig: true, days: [3], showPrevDay: true, status: 'todo' },
-        { id: 'chores-3', icon: '🍽️', title: '食洗機を回す', isGarbageConfig: false, days: 'everyday', showPrevDay: false, status: 'todo' },
-        { id: 'chores-4', icon: '🧺', title: '洗濯予約', isGarbageConfig: false, days: 'everyday', showPrevDay: false, status: 'todo' },
-        { id: 'chores-5', icon: '🛏️', title: 'お昼寝シーツ準備', isGarbageConfig: false, days: [1], showPrevDay: true, status: 'todo' }
+        { id: 'garbage-burnable', icon: '🔥', title: '燃えるゴミ出し', isGarbageConfig: true, days: [2, 5], showPrevDay: true, carryOverPrevDay: false, status: null },
+        { id: 'garbage-nonburnable', icon: '🥫', title: '不燃ごみ出し', isGarbageConfig: true, days: [4], showPrevDay: true, carryOverPrevDay: false, status: null },
+        { id: 'garbage-resource', icon: '♻️', title: '資源ごみ', isGarbageConfig: true, days: [3], showPrevDay: true, carryOverPrevDay: false, status: null },
+        { id: 'chores-3', icon: '🍽️', title: '食洗機を回す', isGarbageConfig: false, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, status: null },
+        { id: 'chores-4', icon: '🧺', title: '洗濯予約', isGarbageConfig: false, days: 'everyday', showPrevDay: false, carryOverPrevDay: true, status: null },
+        { id: 'chores-5', icon: '🛏️', title: 'お昼寝シーツ準備', isGarbageConfig: false, days: [1], showPrevDay: true, carryOverPrevDay: true, status: null }
       ]
     };
   }
@@ -85,10 +151,15 @@
   let themeMode = 'auto'; // 'auto' | 'light' | 'dark'
   let currentRenderedDayOfWeek = null;
 
-  // 自動リセット設定
-  let autoResetConfig = {
-    enabled: true,
+  // 日付の区切り時刻設定（旧：自動リセット設定）
+  let dateResetConfig = {
     hour: 4,
+    minute: 0
+  };
+
+  // おむつの戻り時刻設定（保育園からの帰宅時刻）
+  let diaperReturnTime = {
+    hour: 15,
     minute: 0
   };
 
@@ -113,6 +184,7 @@
   const dom = {
     html: document.documentElement,
     metaThemeColor: document.getElementById('meta-theme-color'),
+    testModeBadge: document.getElementById('test-mode-badge'),
     clockSection: document.getElementById('clock-section'),
     clockStylePill: document.getElementById('clock-style-pill'),
     analogClockWrap: document.getElementById('analog-clock-wrap'),
@@ -169,6 +241,11 @@
     resetModal: document.getElementById('reset-modal'),
     btnCancelReset: document.getElementById('btn-cancel-reset'),
     btnConfirmReset: document.getElementById('btn-confirm-reset'),
+    // おむつ枚数入力パネル
+    diaperInputModal: document.getElementById('diaper-input-modal'),
+    diaperInputTitle: document.getElementById('diaper-input-title'),
+    diaperInputButtons: document.getElementById('diaper-input-buttons'),
+    btnCancelDiaperInput: document.getElementById('btn-cancel-diaper-input'),
     // 設定・タスク編集モーダル
     editorModal: document.getElementById('editor-modal'),
     btnCloseEditor: document.getElementById('btn-close-editor'),
@@ -177,11 +254,15 @@
     childCountButtons: document.getElementById('child-count-buttons'),
     childrenConfigGrid: document.getElementById('children-config-grid'),
     garbageConfigList: document.getElementById('garbage-config-list'),
+    diaperReturnHourInput: document.getElementById('diaper-return-hour-input'),
+    diaperReturnMinuteInput: document.getElementById('diaper-return-minute-input'),
+    btnSaveDiaperReturnTime: document.getElementById('btn-save-diaper-return-time'),
     addTaskForm: document.getElementById('add-task-form'),
     inputTaskIcon: document.getElementById('input-task-icon'),
     inputTaskTitle: document.getElementById('input-task-title'),
     inputTaskCategory: document.getElementById('input-task-category'),
     inputTaskShowPrevDay: document.getElementById('input-task-show-prev-day'),
+    inputTaskCarryOver: document.getElementById('input-task-carry-over'),
     emojiPresets: document.getElementById('emoji-presets'),
     btnDaysEveryday: document.getElementById('btn-days-everyday'),
     dayCheckboxesContainer: document.getElementById('day-checkboxes'),
@@ -196,10 +277,8 @@
   /**
    * 設定されたリセット時刻を1日の区切りとした「論理日付 (YYYY-MM-DD)」を返す
    */
-  function getLogicalDateString(now = new Date()) {
-    const resetHour = autoResetConfig.enabled ? autoResetConfig.hour : RESET_HOUR;
-    const resetMinute = autoResetConfig.enabled ? autoResetConfig.minute : 0;
-    const shiftMs = resetHour * 60 * 60 * 1000 + resetMinute * 60 * 1000;
+  function getLogicalDateString(now = getCurrentTime()) {
+    const shiftMs = dateResetConfig.hour * 60 * 60 * 1000 + dateResetConfig.minute * 60 * 1000;
     const shifted = new Date(now.getTime() - shiftMs);
     const y = shifted.getFullYear();
     const m = String(shifted.getMonth() + 1).padStart(2, '0');
@@ -208,42 +287,123 @@
   }
 
   /**
-   * 全タスク（全子どもの保育園タスク＆家事タスク）の当日状態を「未完了(todo)」にリセット
+   * 設定されたリセット時刻で区切った論理日付のDateオブジェクトを返す
+   * 曜日判定などに使用
    */
-  function resetAllDailyTaskStates() {
-    appState.nurseryTasks.forEach((task) => {
-      task.childStates = {};
-    });
-    appState.choresTasks.forEach((task) => {
-      task.status = 'todo';
-    });
-    saveState();
+  function getLogicalDate(now) {
+    const shiftMs = dateResetConfig.hour * 60 * 60 * 1000 + dateResetConfig.minute * 60 * 1000;
+    return new Date(now.getTime() - shiftMs);
   }
 
   /**
-   * 設定されたリセット時刻を跨いでいた場合、全タスクの完了/不要状態をリセットする
+   * 指定したDateオブジェクトから論理日付文字列を返す
    */
-  function checkAndPerformAutoReset(now = new Date()) {
-    // 自動リセットが無効の場合は何もしない
-    if (!autoResetConfig.enabled) {
-      return false;
+  function dateToLogicalDateString(date) {
+    const y = date.getFullYear();
+    const m = String(date.getMonth() + 1).padStart(2, '0');
+    const d = String(date.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
+  /**
+   * 論理日付文字列から翌日の論理日付文字列を返す
+   */
+  function getNextLogicalDateString(logicalDateStr) {
+    const date = new Date(logicalDateStr + 'T00:00:00');
+    date.setDate(date.getDate() + 1);
+    return dateToLogicalDateString(date);
+  }
+
+  // ==========================================================================
+  // おむつ専用の時刻管理
+  // ==========================================================================
+
+  /**
+   * おむつの入力値の有効期限（次の戻り時刻）を計算する
+   * @param {number} inputTimestamp - 入力した時刻（ミリ秒）
+   * @param {Object} returnTimeConfig - 戻り時刻設定 { hour, minute }
+   * @returns {number} - 有効期限のタイムスタンプ（ミリ秒）
+   */
+  function getDiaperExpiry(inputTimestamp, returnTimeConfig) {
+    const inputDate = new Date(inputTimestamp);
+    const returnDate = new Date(inputDate);
+    returnDate.setHours(returnTimeConfig.hour, returnTimeConfig.minute, 0, 0);
+
+    // 入力時刻が戻り時刻より前なら、同日の戻り時刻が有効期限
+    // 入力時刻が戻り時刻以降なら、翌日の戻り時刻が有効期限
+    if (inputDate.getTime() >= returnDate.getTime()) {
+      returnDate.setDate(returnDate.getDate() + 1);
     }
 
-    const currentLogicalDate = getLogicalDateString(now);
-    const lastResetDate = localStorage.getItem(STORAGE_KEYS.LAST_RESET_LOGICAL_DATE);
+    return returnDate.getTime();
+  }
 
-    if (!lastResetDate) {
-      localStorage.setItem(STORAGE_KEYS.LAST_RESET_LOGICAL_DATE, currentLogicalDate);
-      return false;
-    }
+  /**
+   * おむつのデータが期限切れかを判定する
+   * @param {number} inputTimestamp - 入力した時刻（ミリ秒）
+   * @param {Date} now - 現在時刻
+   * @param {Object} returnTimeConfig - 戻り時刻設定 { hour, minute }
+   * @returns {boolean} - 期限切れの場合 true
+   */
+  function isDiaperDataExpired(inputTimestamp, now, returnTimeConfig) {
+    const expiry = getDiaperExpiry(inputTimestamp, returnTimeConfig);
+    return now.getTime() >= expiry;
+  }
 
-    if (lastResetDate !== currentLogicalDate) {
-      resetAllDailyTaskStates();
-      localStorage.setItem(STORAGE_KEYS.LAST_RESET_LOGICAL_DATE, currentLogicalDate);
-      renderAll();
-      return true;
+  /**
+   * 期限切れのおむつデータ（入力値と状態）を削除する
+   * @param {Date} now - 現在時刻
+   */
+  function cleanupExpiredDiaperData(now = getCurrentTime()) {
+    let needsSave = false;
+
+    appState.nurseryTasks.forEach((task) => {
+      if (!task.isDiaper) return;
+
+      Object.keys(task.childStates).forEach((childId) => {
+        const state = task.childStates[childId];
+        if (state && typeof state.inputTimestamp === 'number') {
+          if (isDiaperDataExpired(state.inputTimestamp, now, diaperReturnTime)) {
+            delete task.childStates[childId];
+            needsSave = true;
+          }
+        }
+      });
+    });
+
+    if (needsSave) {
+      saveState();
     }
-    return false;
+  }
+
+  /**
+   * 古い状態（forDateが今日の論理日付より前）を削除する
+   * ※おむつタスクは cleanupExpiredDiaperData で別途管理するため、ここではスキップ
+   */
+  function cleanupOldTaskStates(now = getCurrentTime()) {
+    const todayStr = getLogicalDateString(now);
+    const tomorrowStr = getNextLogicalDateString(todayStr);
+
+    // nurseryTasks の古い状態を削除（おむつタスクを除く）
+    appState.nurseryTasks.forEach((task) => {
+      if (task.isDiaper) return; // おむつは別管理
+
+      Object.keys(task.childStates).forEach((childId) => {
+        const state = task.childStates[childId];
+        if (state && state.forDate && state.forDate !== todayStr && state.forDate !== tomorrowStr) {
+          delete task.childStates[childId];
+        }
+      });
+    });
+
+    // choresTasks の古い状態を削除
+    appState.choresTasks.forEach((task) => {
+      if (task.status && task.status.forDate && task.status.forDate !== todayStr && task.status.forDate !== tomorrowStr) {
+        task.status = null;
+      }
+    });
+
+    saveState();
   }
 
   // ==========================================================================
@@ -251,12 +411,12 @@
   // ==========================================================================
 
   function loadState() {
-    const savedTheme = localStorage.getItem(STORAGE_KEYS.THEME_MODE);
+    const savedTheme = localStorage.getItem(getStorageKey(STORAGE_KEYS.THEME_MODE));
     if (savedTheme === 'auto' || savedTheme === 'light' || savedTheme === 'dark') {
       themeMode = savedTheme;
     }
 
-    const rawState = localStorage.getItem(STORAGE_KEYS.STATE_V2);
+    const rawState = localStorage.getItem(getStorageKey(STORAGE_KEYS.STATE_V2));
     if (rawState) {
       try {
         const parsed = JSON.parse(rawState);
@@ -278,9 +438,6 @@
           if (typeof parsed.childCount === 'number' && parsed.childCount >= 0 && parsed.childCount <= 4) {
             appState.childCount = parsed.childCount;
           }
-          if (appState.childCount > 0 && appState.activeChildId > appState.childCount) {
-            appState.activeChildId = 1;
-          }
         }
       } catch (e) {
         console.warn('保存データの読み込みに失敗したため初期データを使用します:', e);
@@ -291,12 +448,27 @@
       saveState();
     }
 
-    checkAndPerformAutoReset(new Date());
+    // バージョンチェックとデータ移行
+    if (!appState.version || appState.version < STATE_VERSION) {
+      migrateTaskStates();
+    }
+
+    // carryOverPrevDay の補完（バージョンに関係なく常に実行）
+    ensureCarryOverPrevDay();
+
+    // 家事タスクの status を補完（文字列なら null に）
+    ensureChoresStatusFormat();
+
+    // 古い状態のクリーンアップ
+    cleanupOldTaskStates();
+
+    // おむつデータの期限切れクリーンアップ
+    cleanupExpiredDiaperData();
   }
 
   function saveState() {
     try {
-      localStorage.setItem(STORAGE_KEYS.STATE_V2, JSON.stringify(appState));
+      localStorage.setItem(getStorageKey(STORAGE_KEYS.STATE_V2), JSON.stringify(appState));
     } catch (e) {
       console.error('状態の保存に失敗しました:', e);
     }
@@ -304,33 +476,190 @@
 
   function saveThemeMode() {
     try {
-      localStorage.setItem(STORAGE_KEYS.THEME_MODE, themeMode);
+      localStorage.setItem(getStorageKey(STORAGE_KEYS.THEME_MODE), themeMode);
     } catch (e) {
       console.error('テーマ設定の保存に失敗しました:', e);
     }
   }
 
-  function loadAutoResetConfig() {
+  function loadDateResetConfig() {
     try {
-      const saved = localStorage.getItem(STORAGE_KEYS.AUTO_RESET_CONFIG);
+      const saved = localStorage.getItem(getStorageKey(STORAGE_KEYS.AUTO_RESET_CONFIG));
       if (saved) {
         const parsed = JSON.parse(saved);
-        autoResetConfig = {
-          enabled: typeof parsed.enabled === 'boolean' ? parsed.enabled : true,
+        // enabled は無視、hour と minute のみ引き継ぐ
+        dateResetConfig = {
           hour: typeof parsed.hour === 'number' ? parsed.hour : 4,
           minute: typeof parsed.minute === 'number' ? parsed.minute : 0
         };
       }
     } catch (e) {
-      console.warn('自動リセット設定の読み込みに失敗しました:', e);
+      console.warn('日付区切り設定の読み込みに失敗しました:', e);
     }
   }
 
-  function saveAutoResetConfig() {
+  function saveDateResetConfig() {
     try {
-      localStorage.setItem(STORAGE_KEYS.AUTO_RESET_CONFIG, JSON.stringify(autoResetConfig));
+      localStorage.setItem(getStorageKey(STORAGE_KEYS.AUTO_RESET_CONFIG), JSON.stringify(dateResetConfig));
     } catch (e) {
-      console.error('自動リセット設定の保存に失敗しました:', e);
+      console.error('日付区切り設定の保存に失敗しました:', e);
+    }
+  }
+
+  function loadDiaperReturnTime() {
+    try {
+      const saved = localStorage.getItem(getStorageKey(STORAGE_KEYS.DIAPER_RETURN_TIME));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        diaperReturnTime = {
+          hour: typeof parsed.hour === 'number' ? parsed.hour : 15,
+          minute: typeof parsed.minute === 'number' ? parsed.minute : 0
+        };
+      }
+    } catch (e) {
+      console.warn('おむつ戻り時刻設定の読み込みに失敗しました:', e);
+    }
+  }
+
+  function saveDiaperReturnTime() {
+    try {
+      localStorage.setItem(getStorageKey(STORAGE_KEYS.DIAPER_RETURN_TIME), JSON.stringify(diaperReturnTime));
+    } catch (e) {
+      console.error('おむつ戻り時刻設定の保存に失敗しました:', e);
+    }
+  }
+
+  /**
+   * タスクの carryOverPrevDay を取得するヘルパー関数
+   * 値が boolean でない場合は初期値を返す
+   * @param {Object} task - タスクオブジェクト
+   * @returns {boolean}
+   */
+  function getCarryOverPrevDay(task) {
+    if (typeof task.carryOverPrevDay === 'boolean') {
+      return task.carryOverPrevDay;
+    }
+    // isGarbageConfig が true なら false、それ以外なら true
+    return task.isGarbageConfig ? false : true;
+  }
+
+  /**
+   * すべてのタスクの carryOverPrevDay を補完する（読み込み時に常に実行）
+   */
+  function ensureCarryOverPrevDay() {
+    let needsSave = false;
+
+    // nurseryTasks の補完
+    appState.nurseryTasks.forEach((task) => {
+      if (typeof task.carryOverPrevDay !== 'boolean') {
+        task.carryOverPrevDay = true;
+        needsSave = true;
+      }
+    });
+
+    // choresTasks の補完
+    appState.choresTasks.forEach((task) => {
+      if (typeof task.carryOverPrevDay !== 'boolean') {
+        task.carryOverPrevDay = task.isGarbageConfig ? false : true;
+        needsSave = true;
+      }
+    });
+
+    if (needsSave) {
+      saveState();
+    }
+  }
+
+  /**
+   * 家事タスクの status を補完する（文字列なら null に）
+   * バージョンに関係なく、読み込むたびに実行
+   */
+  function ensureChoresStatusFormat() {
+    let needsSave = false;
+
+    appState.choresTasks.forEach((task) => {
+      if (typeof task.status === 'string') {
+        task.status = null;
+        needsSave = true;
+      }
+    });
+
+    if (needsSave) {
+      saveState();
+    }
+  }
+
+  /**
+   * データ移行：旧形式（文字列）から新形式（オブジェクト）へ
+   */
+  function migrateTaskStates() {
+    const now = getCurrentTime();
+    const todayStr = getLogicalDateString(now);
+    let migrated = false;
+    const oldVersion = appState.version || 0;
+
+    // バージョン3以前からの移行：nurseryTasks の childStates
+    if (oldVersion < 3) {
+      appState.nurseryTasks.forEach((task) => {
+        // childStates の移行
+        Object.keys(task.childStates).forEach((childId) => {
+          const state = task.childStates[childId];
+          if (typeof state === 'string') {
+            // 旧形式（文字列）を新形式に変換
+            if (state === 'done' || state === 'skip') {
+              task.childStates[childId] = { value: state, forDate: todayStr };
+              migrated = true;
+            } else {
+              // 'todo' は削除
+              delete task.childStates[childId];
+              migrated = true;
+            }
+          }
+        });
+      });
+
+      // choresTasks の移行
+      appState.choresTasks.forEach((task) => {
+        // status の移行
+        if (typeof task.status === 'string') {
+          if (task.status === 'done' || task.status === 'skip') {
+            task.status = { value: task.status, forDate: todayStr };
+            migrated = true;
+          } else {
+            // 'todo' は null に
+            task.status = null;
+            migrated = true;
+          }
+        }
+      });
+    }
+
+    // バージョン4への移行：おむつの枚数管理変更
+    if (oldVersion < 4) {
+      // 子どもデータから diaperCount と diaperNotNeeded を削除
+      appState.children.forEach((child) => {
+        if ('diaperCount' in child) {
+          delete child.diaperCount;
+          migrated = true;
+        }
+        if ('diaperNotNeeded' in child) {
+          delete child.diaperNotNeeded;
+          migrated = true;
+        }
+      });
+
+      // おむつタスクの childStates をクリア
+      appState.nurseryTasks.forEach((task) => {
+        if (task.isDiaper) {
+          task.childStates = {};
+          migrated = true;
+        }
+      });
+    }
+
+    if (migrated) {
+      appState.version = STATE_VERSION;
+      saveState();
     }
   }
 
@@ -421,7 +750,7 @@
   }
 
   function updateClockAndSchedule() {
-    const now = new Date();
+    const now = getCurrentTime();
 
     const h = now.getHours();
     const m = now.getMinutes();
@@ -465,14 +794,17 @@
       dom.ssDateDisplay.textContent = dateStr;
     }
 
-    // 朝4:00の自動リセット判定
-    checkAndPerformAutoReset(now);
-
-    // 曜日が変わった場合はタスク一覧を再描画
-    if (currentRenderedDayOfWeek !== dayOfWeek) {
-      currentRenderedDayOfWeek = dayOfWeek;
+    // 論理日付の曜日が変わった場合は古い状態をクリーンアップして再描画
+    const logicalDate = getLogicalDate(now);
+    const logicalDayOfWeek = logicalDate.getDay();
+    if (currentRenderedDayOfWeek !== logicalDayOfWeek) {
+      currentRenderedDayOfWeek = logicalDayOfWeek;
+      cleanupOldTaskStates(now);
       renderAll();
     }
+
+    // おむつデータの期限切れチェック（毎秒実行）
+    cleanupExpiredDiaperData(now);
 
     // テーマ再評価
     evaluateAndApplyTheme(now);
@@ -487,14 +819,10 @@
     return hour >= NIGHT_HOURS.START || hour < NIGHT_HOURS.END;
   }
 
-  const osDarkMediaQuery = window.matchMedia
-    ? window.matchMedia('(prefers-color-scheme: dark)')
-    : { matches: false, addEventListener: () => {} };
-
   function initAmbientLightSensor() {
     if (!('AmbientLightSensor' in window)) {
       sensorActive = false;
-      updateSensorStatusBadge();
+      updateSensorStatusBadge(getCurrentTime());
       return;
     }
 
@@ -507,7 +835,7 @@
 
         if (sensorDarkState === null) {
           sensorDarkState = currentLux < LUX_CONFIG.DARK_THRESHOLD;
-          evaluateAndApplyTheme();
+          evaluateAndApplyTheme(getCurrentTime());
         } else {
           let desiredState = sensorDarkState;
           if (!sensorDarkState && currentLux < LUX_CONFIG.DARK_THRESHOLD) {
@@ -523,8 +851,8 @@
               luxHysteresisTimer = setTimeout(() => {
                 sensorDarkState = desiredState;
                 pendingLuxTargetState = null;
-                evaluateAndApplyTheme();
-                updateSensorStatusBadge();
+                evaluateAndApplyTheme(getCurrentTime());
+                updateSensorStatusBadge(getCurrentTime());
               }, LUX_CONFIG.HOLD_DURATION_MS);
             }
           } else if (luxHysteresisTimer) {
@@ -534,25 +862,25 @@
           }
         }
 
-        updateSensorStatusBadge();
+        updateSensorStatusBadge(getCurrentTime());
       });
 
       sensor.addEventListener('error', () => {
         sensorActive = false;
         currentLux = null;
-        updateSensorStatusBadge();
-        evaluateAndApplyTheme();
+        updateSensorStatusBadge(getCurrentTime());
+        evaluateAndApplyTheme(getCurrentTime());
       });
 
       sensor.start();
     } catch (err) {
       sensorActive = false;
       currentLux = null;
-      updateSensorStatusBadge();
+      updateSensorStatusBadge(getCurrentTime());
     }
   }
 
-  function evaluateAndApplyTheme(now = new Date()) {
+  function evaluateAndApplyTheme(now = getCurrentTime()) {
     let resolvedTheme = 'light';
 
     if (themeMode === 'light') {
@@ -560,14 +888,14 @@
     } else if (themeMode === 'dark') {
       resolvedTheme = 'dark';
     } else {
-      // 自動モード（3段階ハイブリッド制御）
+      // 自動モード（2段階制御）
       if (sensorActive && sensorDarkState !== null) {
         // 第1優先：照度センサー（AmbientLightSensor）が有効な場合は、時間帯に関わらず実際の部屋の明るさで昼/夜を決定
         resolvedTheme = sensorDarkState ? 'dark' : 'light';
       } else {
-        // 第2・第3優先：センサー非対応または未取得時は、OSダークモード設定または夜間時間帯（21:00〜翌6:00）で決定
+        // 第2優先：センサー非対応または未取得時は、夜間時間帯（21:00〜翌6:00）で決定
         const inNightWindow = isNightTimeWindow(now);
-        resolvedTheme = (osDarkMediaQuery.matches || inNightWindow) ? 'dark' : 'light';
+        resolvedTheme = inNightWindow ? 'dark' : 'light';
       }
     }
 
@@ -580,7 +908,7 @@
 
     updateThemeToggleButtonUI();
     updateSensorStatusBadge(now);
-    updateAutoResetStatusBadge();
+    updateDateResetStatusBadge();
   }
 
   function updateThemeToggleButtonUI() {
@@ -596,35 +924,22 @@
     }
   }
 
-  function updateSensorStatusBadge(now = new Date()) {
+  function updateSensorStatusBadge(now = getCurrentTime()) {
     if (sensorActive && currentLux !== null) {
       dom.sensorDot.className = 'status-dot active';
-      dom.sensorText.textContent = `テーマ: 輝度優先 (${currentLux} lx)`;
+      dom.sensorText.textContent = `テーマ: 照度 (${currentLux} lx)`;
     } else {
       dom.sensorDot.className = 'status-dot warn';
-      const inNight = isNightTimeWindow(now);
-      const osDark = osDarkMediaQuery.matches;
-      if (inNight) {
-        dom.sensorText.textContent = 'テーマ: 時間優先';
-      } else if (osDark) {
-        dom.sensorText.textContent = 'テーマ: OS優先';
-      } else {
-        dom.sensorText.textContent = 'テーマ: OS/時間優先';
-      }
+      dom.sensorText.textContent = 'テーマ: 時間帯';
     }
   }
 
-  function updateAutoResetStatusBadge() {
+  function updateDateResetStatusBadge() {
     if (!dom.autoResetDot || !dom.autoResetText) return;
 
-    if (autoResetConfig.enabled) {
-      dom.autoResetDot.className = 'status-dot active';
-      const timeStr = `${String(autoResetConfig.hour).padStart(2, '0')}:${String(autoResetConfig.minute).padStart(2, '0')}`;
-      dom.autoResetText.textContent = `自動リセット: ON (${timeStr})`;
-    } else {
-      dom.autoResetDot.className = 'status-dot warn';
-      dom.autoResetText.textContent = '自動リセット: OFF';
-    }
+    dom.autoResetDot.className = 'status-dot active';
+    const timeStr = `${String(dateResetConfig.hour).padStart(2, '0')}:${String(dateResetConfig.minute).padStart(2, '0')}`;
+    dom.autoResetText.textContent = `日付の区切り: ${timeStr}`;
   }
 
   function cycleThemeMode() {
@@ -636,13 +951,7 @@
       themeMode = 'auto';
     }
     saveThemeMode();
-    evaluateAndApplyTheme();
-  }
-
-  if (osDarkMediaQuery.addEventListener) {
-    osDarkMediaQuery.addEventListener('change', () => {
-      evaluateAndApplyTheme();
-    });
+    evaluateAndApplyTheme(getCurrentTime());
   }
 
   // ==========================================================================
@@ -689,7 +998,7 @@
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') {
       requestWakeLock();
-      checkAndPerformAutoReset(new Date());
+      cleanupOldTaskStates(getCurrentTime());
     }
   });
 
@@ -746,6 +1055,43 @@
   }
 
   /**
+   * 保存されている状態が、現在の表示条件に一致するか判定する
+   * @param {Object|null} state - { value, forDate, phase? } 形式の状態オブジェクト
+   * @param {string} match - getTaskScheduleMatch の戻り値 ('everyday' | 'today' | 'tomorrow')
+   * @param {boolean} carryOverPrevDay - 前日のチェックを当日に引き継ぐか
+   * @param {string} todayStr - 今日の論理日付文字列
+   * @param {string} tomorrowStr - 翌日の論理日付文字列
+   * @returns {'done' | 'skip' | 'todo'}
+   */
+  function getEffectiveTaskState(state, match, carryOverPrevDay, todayStr, tomorrowStr) {
+    if (!state || !state.value || !state.forDate) {
+      return 'todo';
+    }
+
+    if (match === 'today' || match === 'everyday') {
+      // 「今日」「毎日」：forDate が今日で、phase がない
+      if (state.forDate === todayStr && !state.phase) {
+        return state.value;
+      }
+    } else if (match === 'tomorrow') {
+      // 「明日」として表示
+      if (carryOverPrevDay) {
+        // 前日のチェックを当日に引き継ぐ：forDate が翌日で、phase がない
+        if (state.forDate === tomorrowStr && !state.phase) {
+          return state.value;
+        }
+      } else {
+        // 前日と当日を別々に管理：forDate が翌日で、phase === 'prev'
+        if (state.forDate === tomorrowStr && state.phase === 'prev') {
+          return state.value;
+        }
+      }
+    }
+
+    return 'todo';
+  }
+
+  /**
    * 特定の子どもに対してその保育園項目がON（有効）になっているか判定する
    */
   function isNurseryTaskEnabledForChild(task, childId) {
@@ -778,21 +1124,94 @@
   }
 
   /**
-   * 特定の子どもにおける保育園タスクの状態 ('todo' | 'done' | 'skip') を取得
-   * おむつタスクでその子どもが「おむつ常時不要 (diaperNotNeeded)」の場合は自動的に 'skip' とする
+   * おむつタスクの入力値を取得
+   * @returns {{ hasInput: boolean, count: number }} - hasInput: 入力済みか、count: 枚数
    */
-  function getNurseryTaskStatusForChild(task, childId) {
-    const child = appState.children.find((c) => c.id === childId);
-    if (task.isDiaper && child && child.diaperNotNeeded) {
-      return 'skip';
+  function getDiaperInput(task, childId) {
+    const state = task.childStates && task.childStates[String(childId)];
+    if (!state || typeof state.count !== 'number') {
+      return { hasInput: false, count: 0 };
     }
-    const st = task.childStates && task.childStates[String(childId)];
-    if (st === 'done' || st === 'skip') return st;
-    return 'todo';
+    return { hasInput: true, count: state.count };
   }
 
   /**
-   * 3状態サイクル：'todo'（未完了） -> 'done'（完了/やった） -> 'skip'（不要） -> 'todo'
+   * おむつタスクの枚数を設定する
+   * @param {string} taskId - タスクID
+   * @param {number} childId - 子どもID
+   * @param {number} count - 枚数（0〜10）
+   */
+  function setDiaperCount(taskId, childId, count) {
+    const task = appState.nurseryTasks.find((t) => t.id === taskId);
+    if (!task || !task.isDiaper) return;
+
+    if (!task.childStates) task.childStates = {};
+
+    const now = getCurrentTime();
+    const timestamp = now.getTime();
+
+    if (count === 0) {
+      // 0枚 = 自動で「不要」
+      task.childStates[String(childId)] = {
+        count: 0,
+        inputTimestamp: timestamp,
+        value: 'skip'
+      };
+    } else {
+      // 1枚以上 = 状態を未完了にリセット
+      task.childStates[String(childId)] = {
+        count,
+        inputTimestamp: timestamp,
+        value: 'todo'
+      };
+    }
+
+    saveState();
+    renderAll();
+  }
+
+  /**
+   * 特定の子どもにおける保育園タスクの状態 ('todo' | 'done' | 'skip') を取得
+   * おむつタスクの場合は、枚数入力に基づいて特別な処理を行う
+   */
+  function getNurseryTaskStatusForChild(task, childId, match) {
+    const state = task.childStates && task.childStates[String(childId)];
+
+    // おむつタスクの場合
+    if (task.isDiaper) {
+      if (!state || typeof state.count !== 'number') {
+        // 未入力
+        return 'todo';
+      }
+      if (state.count === 0) {
+        // 0枚入力 = 自動で「不要」
+        return 'skip';
+      }
+      // 1枚以上入力 = value を返す（'done' | 'skip' | 'todo'）
+      return state.value || 'todo';
+    }
+
+    // 通常のタスク
+    const now = getCurrentTime();
+    const todayStr = getLogicalDateString(now);
+    const tomorrowStr = getNextLogicalDateString(todayStr);
+
+    return getEffectiveTaskState(state, match, getCarryOverPrevDay(task), todayStr, tomorrowStr);
+  }
+
+  /**
+   * 家事タスクの状態を取得
+   */
+  function getChoreTaskStatus(task, match) {
+    const now = getCurrentTime();
+    const todayStr = getLogicalDateString(now);
+    const tomorrowStr = getNextLogicalDateString(todayStr);
+
+    return getEffectiveTaskState(task.status, match, getCarryOverPrevDay(task), todayStr, tomorrowStr);
+  }
+
+  /**
+   * 3状態サイクル（おむつ以外）：'todo'（未完了） -> 'done'（完了/やった） -> 'skip'（不要） -> 'todo'
    */
   function getNextTriState(currentStatus) {
     if (currentStatus === 'todo') return 'done';
@@ -800,44 +1219,108 @@
     return 'todo';
   }
 
-  function cycleNurseryTaskState(taskId, childId) {
+  /**
+   * おむつタスクの2状態サイクル：'todo' <-> 'done'
+   */
+  function getNextDiaperState(currentStatus) {
+    return currentStatus === 'done' ? 'todo' : 'done';
+  }
+
+  function cycleNurseryTaskState(taskId, childId, match) {
     const task = appState.nurseryTasks.find((t) => t.id === taskId);
     if (!task) return;
-    const child = appState.children.find((c) => c.id === childId);
 
-    const current = getNurseryTaskStatusForChild(task, childId);
+    // おむつタスクの場合は、入力パネルを開く処理を呼び出し元で行う
+    // ここでは、入力済みの場合のみ状態を切り替える
+    if (task.isDiaper) {
+      const state = task.childStates && task.childStates[String(childId)];
+      if (!state || typeof state.count !== 'number') {
+        // 未入力の場合は何もしない（入力パネルを開く）
+        return;
+      }
+      if (state.count === 0) {
+        // 0枚の場合は常に「不要」なので切り替えない
+        return;
+      }
+      // 1枚以上の場合は、'todo' <-> 'done' を切り替える
+      const current = state.value || 'todo';
+      const next = getNextDiaperState(current);
+      task.childStates[String(childId)] = {
+        ...state,
+        value: next
+      };
+      saveState();
+      renderAll();
+      return;
+    }
+
+    // 通常のタスク
+    const current = getNurseryTaskStatusForChild(task, childId, match);
     const next = getNextTriState(current);
 
-    // おむつが「常時不要」に設定されていた子どもをタップで切り替えた場合は常時不要フラグを解除して状態変更を反映
-    if (task.isDiaper && child && child.diaperNotNeeded && next !== 'skip') {
-      child.diaperNotNeeded = false;
-    }
-
     if (!task.childStates) task.childStates = {};
-    task.childStates[String(childId)] = next;
+
+    const now = getCurrentTime();
+    const todayStr = getLogicalDateString(now);
+    const tomorrowStr = getNextLogicalDateString(todayStr);
+
+    if (next === 'todo') {
+      // 'todo' は保存しない
+      delete task.childStates[String(childId)];
+    } else {
+      // forDate と phase を決定
+      let forDate, phase;
+      if (match === 'today' || match === 'everyday') {
+        forDate = todayStr;
+        phase = undefined;
+      } else if (match === 'tomorrow') {
+        forDate = tomorrowStr;
+        phase = getCarryOverPrevDay(task) ? undefined : 'prev';
+      }
+
+      task.childStates[String(childId)] = {
+        value: next,
+        forDate,
+        ...(phase && { phase })
+      };
+    }
 
     saveState();
     renderAll();
   }
 
-  function cycleChoreTaskState(taskId) {
+  function cycleChoreTaskState(taskId, match) {
     const task = appState.choresTasks.find((t) => t.id === taskId);
     if (!task) return;
-    task.status = getNextTriState(task.status || 'todo');
-    saveState();
-    renderAll();
-  }
 
-  function adjustChildDiaperCount(childId, delta) {
-    const child = appState.children.find((c) => c.id === childId);
-    if (!child) return;
-    const nextCount = Math.max(0, Math.min(20, (child.diaperCount || 0) + delta));
-    child.diaperCount = nextCount;
-    if (nextCount === 0) {
-      child.diaperNotNeeded = true;
+    const current = getChoreTaskStatus(task, match);
+    const next = getNextTriState(current);
+
+    const now = getCurrentTime();
+    const todayStr = getLogicalDateString(now);
+    const tomorrowStr = getNextLogicalDateString(todayStr);
+
+    if (next === 'todo') {
+      // 'todo' は保存しない
+      task.status = null;
     } else {
-      child.diaperNotNeeded = false;
+      // forDate と phase を決定
+      let forDate, phase;
+      if (match === 'today' || match === 'everyday') {
+        forDate = todayStr;
+        phase = undefined;
+      } else if (match === 'tomorrow') {
+        forDate = tomorrowStr;
+        phase = getCarryOverPrevDay(task) ? undefined : 'prev';
+      }
+
+      task.status = {
+        value: next,
+        forDate,
+        ...(phase && { phase })
+      };
     }
+
     saveState();
     renderAll();
   }
@@ -847,7 +1330,9 @@
   // ==========================================================================
 
   function renderAll() {
-    const todayDay = new Date().getDay();
+    const now = getCurrentTime();
+    const logicalDate = getLogicalDate(now);
+    const todayDay = logicalDate.getDay();
     currentRenderedDayOfWeek = todayDay;
 
     renderNurseryGrid(todayDay);
@@ -856,7 +1341,7 @@
   }
 
   /**
-   * 子ども人数分（1〜4人すべて）の「🎒 保育園の用意」を同時に一覧描画
+   * 子ども人数分（1〜4人すべて）の「🎒 子どもの用意」を同時に一覧描画
    * 子ども0人の場合は保育園セクション自体を非表示にし、家庭内タスク（家事・ゴミ出し）のみを大きく表示する
    */
   function renderNurseryGrid(todayDay) {
@@ -889,8 +1374,8 @@
       let childDone = 0;
       let childSkip = 0;
 
-      scheduledTasks.forEach(({ task }) => {
-        const st = getNurseryTaskStatusForChild(task, child.id);
+      scheduledTasks.forEach(({ task, match }) => {
+        const st = getNurseryTaskStatusForChild(task, child.id, match);
         if (st === 'skip') {
           childSkip++;
           totalSkipAll++;
@@ -927,7 +1412,8 @@
         rowTasks.appendChild(emptyMsg);
       } else {
         scheduledTasks.forEach(({ task, match }) => {
-          const status = getNurseryTaskStatusForChild(task, child.id);
+          const status = getNurseryTaskStatusForChild(task, child.id, match);
+          const diaperInput = task.isDiaper ? getDiaperInput(task, child.id) : null;
           const card = createTaskCardElement({
             icon: task.icon,
             title: task.title,
@@ -935,11 +1421,17 @@
             days: task.days,
             match,
             isDiaper: Boolean(task.isDiaper),
-            diaperCount: child.diaperCount,
-            diaperNotNeeded: child.diaperNotNeeded,
+            diaperInput,
             hideEverydayTag: true,
-            onCardClick: () => cycleNurseryTaskState(task.id, child.id),
-            onDiaperStep: (delta) => adjustChildDiaperCount(child.id, delta)
+            onCardClick: () => {
+              // おむつで未入力の場合は入力パネルを開く
+              if (task.isDiaper && !diaperInput.hasInput) {
+                openDiaperInputPanel(task.id, child.id);
+              } else {
+                cycleNurseryTaskState(task.id, child.id, match);
+              }
+            },
+            onDiaperInputClick: () => openDiaperInputPanel(task.id, child.id)
           });
           rowTasks.appendChild(card);
         });
@@ -969,8 +1461,8 @@
     let doneCount = 0;
     let skipCount = 0;
 
-    scheduledTasks.forEach(({ task }) => {
-      const st = task.status || 'todo';
+    scheduledTasks.forEach(({ task, match }) => {
+      const st = getChoreTaskStatus(task, match);
       if (st === 'skip') {
         skipCount++;
       } else {
@@ -992,7 +1484,7 @@
     }
 
     scheduledTasks.forEach(({ task, match }) => {
-      const status = task.status || 'todo';
+      const status = getChoreTaskStatus(task, match);
       const card = createTaskCardElement({
         icon: task.icon,
         title: task.title,
@@ -1001,14 +1493,14 @@
         match,
         isDiaper: false,
         hideEverydayTag: false,
-        onCardClick: () => cycleChoreTaskState(task.id)
+        onCardClick: () => cycleChoreTaskState(task.id, match)
       });
       dom.gridChores.appendChild(card);
     });
   }
 
   /**
-   * 3状態（未完了・完了・不要）＋おむつ枚数ステッパー＋前日バッジ対応の巨大ボタンカードを生成
+   * 3状態（未完了・完了・不要）＋おむつ枚数入力＋前日バッジ対応の巨大ボタンカードを生成
    */
   function createTaskCardElement({
     icon,
@@ -1017,11 +1509,10 @@
     days,
     match,
     isDiaper,
-    diaperCount,
-    diaperNotNeeded,
+    diaperInput, // { hasInput: boolean, count: number }
     hideEverydayTag = false,
     onCardClick,
-    onDiaperStep
+    onDiaperInputClick
   }) {
     const stateClass = status === 'done' ? ' completed' : status === 'skip' ? ' skipped' : '';
     const card = document.createElement('div');
@@ -1047,22 +1538,28 @@
         </div>`
       : '';
 
-    // おむつ必要枚数コントロール
+    // おむつ枚数入力表示
     let diaperHtml = '';
     if (isDiaper) {
-      if (status === 'skip' || diaperNotNeeded || diaperCount === 0) {
+      if (!diaperInput.hasInput) {
+        // 未入力
         diaperHtml = `
-          <div class="diaper-Counter-wrap" data-stop-prop="true">
-            <span class="diaper-count-text">おむつ不要</span>
-            <button type="button" class="diaper-step-btn" data-delta="1" title="枚数を増やす">＋</button>
+          <div class="diaper-input-wrap diaper-not-entered" data-stop-prop="true">
+            <span class="diaper-input-text">枚数を入力</span>
+          </div>
+        `;
+      } else if (diaperInput.count === 0) {
+        // 0枚入力 = 今回は不要
+        diaperHtml = `
+          <div class="diaper-input-wrap diaper-zero" data-stop-prop="true">
+            <span class="diaper-input-text">今回は不要</span>
           </div>
         `;
       } else {
+        // 1枚以上
         diaperHtml = `
-          <div class="diaper-Counter-wrap" data-stop-prop="true">
-            <button type="button" class="diaper-step-btn" data-delta="-1" title="1枚減らす">−</button>
-            <span class="diaper-count-text">必要 ${escapeHtml(diaperCount)} 枚</span>
-            <button type="button" class="diaper-step-btn" data-delta="1" title="1枚増やす">＋</button>
+          <div class="diaper-input-wrap diaper-entered" data-stop-prop="true">
+            <span class="diaper-input-text">必要 ${escapeHtml(diaperInput.count)} 枚</span>
           </div>
         `;
       }
@@ -1091,16 +1588,15 @@
       ${bottomRowHtml}
     `;
 
-    // おむつ枚数の「−」「＋」ボタンタップ時はカードの状態切替を発火させない
-    if (isDiaper && onDiaperStep) {
-      const stepBtns = card.querySelectorAll('.diaper-step-btn');
-      stepBtns.forEach((btn) => {
-        btn.addEventListener('click', (e) => {
+    // おむつ枚数入力エリアのタップ処理
+    if (isDiaper && onDiaperInputClick) {
+      const diaperWrap = card.querySelector('.diaper-input-wrap');
+      if (diaperWrap) {
+        diaperWrap.addEventListener('click', (e) => {
           e.stopPropagation();
-          const delta = Number(btn.dataset.delta);
-          onDiaperStep(delta);
+          onDiaperInputClick();
         });
-      });
+      }
     }
 
     card.addEventListener('click', () => {
@@ -1186,29 +1682,22 @@
   // 8. 自動リセット設定＆手動リセット
   // ==========================================================================
 
-  function toggleAutoResetConfig() {
-    if (autoResetConfig.enabled) {
-      // ONからOFFへ
-      autoResetConfig.enabled = false;
-      saveAutoResetConfig();
-      updateAutoResetStatusBadge();
-    } else {
-      // OFFからONへ → 時刻設定モーダルを表示
-      openAutoResetConfigModal();
-    }
+  function toggleDateResetConfig() {
+    // タップで時刻設定モーダルを表示
+    openDateResetConfigModal();
   }
 
-  function openAutoResetConfigModal() {
-    dom.autoResetHourInput.value = autoResetConfig.hour;
-    dom.autoResetMinuteInput.value = autoResetConfig.minute;
+  function openDateResetConfigModal() {
+    dom.autoResetHourInput.value = dateResetConfig.hour;
+    dom.autoResetMinuteInput.value = dateResetConfig.minute;
     dom.autoResetConfigModal.hidden = false;
   }
 
-  function closeAutoResetConfigModal() {
+  function closeDateResetConfigModal() {
     dom.autoResetConfigModal.hidden = true;
   }
 
-  function saveAutoResetConfigFromModal() {
+  function saveDateResetConfigFromModal() {
     const hour = parseInt(dom.autoResetHourInput.value, 10);
     const minute = parseInt(dom.autoResetMinuteInput.value, 10);
 
@@ -1217,12 +1706,12 @@
       return;
     }
 
-    autoResetConfig.enabled = true;
-    autoResetConfig.hour = hour;
-    autoResetConfig.minute = minute;
-    saveAutoResetConfig();
-    updateAutoResetStatusBadge();
-    closeAutoResetConfigModal();
+    dateResetConfig.hour = hour;
+    dateResetConfig.minute = minute;
+    saveDateResetConfig();
+
+    updateDateResetStatusBadge();
+    closeDateResetConfigModal();
   }
 
   function openResetModal() {
@@ -1234,11 +1723,84 @@
   }
 
   function executeManualReset() {
-    resetAllDailyTaskStates();
-    localStorage.setItem(STORAGE_KEYS.LAST_RESET_LOGICAL_DATE, getLogicalDateString(new Date()));
+    const now = getCurrentTime();
+    const todayStr = getLogicalDateString(now);
+    const tomorrowStr = getNextLogicalDateString(todayStr);
+
+    // 今日と翌日の状態を削除
+    appState.nurseryTasks.forEach((task) => {
+      if (task.isDiaper) {
+        // おむつタスクはすべての入力値と状態を削除
+        task.childStates = {};
+      } else {
+        // 通常タスクは forDate が今日・翌日の状態を削除
+        Object.keys(task.childStates).forEach((childId) => {
+          const state = task.childStates[childId];
+          if (state && state.forDate && (state.forDate === todayStr || state.forDate === tomorrowStr)) {
+            delete task.childStates[childId];
+          }
+        });
+      }
+    });
+
+    appState.choresTasks.forEach((task) => {
+      if (task.status && task.status.forDate && (task.status.forDate === todayStr || task.status.forDate === tomorrowStr)) {
+        task.status = null;
+      }
+    });
+
+    saveState();
     renderAll();
     closeResetModal();
   }
+
+  // ==========================================================================
+  // おむつ枚数入力パネル
+  // ==========================================================================
+  let currentDiaperTaskId = null;
+  let currentDiaperChildId = null;
+
+  function openDiaperInputPanel(taskId, childId) {
+    if (!dom.diaperInputModal) return;
+
+    currentDiaperTaskId = taskId;
+    currentDiaperChildId = childId;
+
+    const task = appState.nurseryTasks.find((t) => t.id === taskId);
+    const child = appState.children.find((c) => c.id === childId);
+    if (!task || !child) return;
+
+    dom.diaperInputTitle.textContent = `${child.name} - ${task.title}`;
+
+    // 0〜10のボタンを生成
+    dom.diaperInputButtons.innerHTML = '';
+    for (let i = 0; i <= 10; i++) {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'diaper-input-btn';
+      btn.textContent = String(i);
+      btn.dataset.count = String(i);
+      btn.addEventListener('click', () => {
+        setDiaperCount(taskId, childId, i);
+        closeDiaperInputPanel();
+      });
+      dom.diaperInputButtons.appendChild(btn);
+    }
+
+    dom.diaperInputModal.hidden = false;
+  }
+
+  function closeDiaperInputPanel() {
+    if (dom.diaperInputModal) {
+      dom.diaperInputModal.hidden = true;
+    }
+    currentDiaperTaskId = null;
+    currentDiaperChildId = null;
+  }
+
+  // ==========================================================================
+  // 設定・タスク編集モーダル
+  // ==========================================================================
 
   function openEditorModal() {
     renderEditorModalContents();
@@ -1252,7 +1814,20 @@
   function renderEditorModalContents() {
     renderChildConfigSection();
     renderGarbageConfigSection();
+    renderDiaperReturnTimeSection();
     renderEditorTaskLists();
+  }
+
+  /**
+   * 2-2. おむつの戻り時刻設定を表示
+   */
+  function renderDiaperReturnTimeSection() {
+    if (dom.diaperReturnHourInput) {
+      dom.diaperReturnHourInput.value = diaperReturnTime.hour;
+    }
+    if (dom.diaperReturnMinuteInput) {
+      dom.diaperReturnMinuteInput.value = diaperReturnTime.minute;
+    }
   }
 
   /**
@@ -1298,13 +1873,6 @@
         <div class="child-config-row">
           <input type="text" class="child-name-input" value="${escapeHtml(child.name)}" maxlength="12" aria-label="子どもの名前">
         </div>
-        <div class="child-config-row">
-          <span>🩲 おむつ必要枚数</span>
-          <div class="diaper-config-controls">
-            <input type="number" class="diaper-number-input" min="0" max="20" value="${escapeHtml(child.diaperCount)}" ${child.diaperNotNeeded ? 'disabled' : ''}>
-            <span>枚</span>
-          </div>
-        </div>
         <div class="child-tasks-toggle-section">
           <span class="child-tasks-toggle-title">表示する項目（タップでON/OFF）：</span>
           <div class="child-task-pills">${taskPillsHtml}</div>
@@ -1312,19 +1880,10 @@
       `;
 
       const nameInput = card.querySelector('.child-name-input');
-      const diaperInput = card.querySelector('.diaper-number-input');
       const pillButtons = card.querySelectorAll('.child-task-pill');
 
       nameInput.addEventListener('input', () => {
         child.name = nameInput.value.trim() || `子ども${child.id}`;
-        saveState();
-        renderAll();
-      });
-
-      diaperInput.addEventListener('change', () => {
-        const val = Math.max(0, Math.min(20, Number(diaperInput.value) || 0));
-        diaperInput.value = String(val);
-        child.diaperCount = val;
         saveState();
         renderAll();
       });
@@ -1367,19 +1926,32 @@
         })
         .join('');
 
+      // 曜日が未選択の場合の注意文
+      const warningHtml = selectedDays.length === 0
+        ? '<p class="garbage-warning">※ すべての曜日のチェックを外すと、このタスクはメイン画面に表示されなくなります。</p>'
+        : '';
+
       row.innerHTML = `
-        <div class="garbage-item-title">${escapeHtml(task.icon)} ${escapeHtml(task.title)}</div>
-        <div class="garbage-item-controls">
-          <div class="day-checkboxes">${dayChipsHtml}</div>
-          <label class="prev-day-toggle-label">
-            <input type="checkbox" class="garbage-prev-day-cb" ${task.showPrevDay ? 'checked' : ''}>
-            <span>前日から表示</span>
-          </label>
+        <div>
+          <div class="garbage-item-title">${escapeHtml(task.icon)} ${escapeHtml(task.title)}</div>
+          <div class="garbage-item-controls">
+            <div class="day-checkboxes">${dayChipsHtml}</div>
+            <label class="prev-day-toggle-label">
+              <input type="checkbox" class="garbage-prev-day-cb" ${task.showPrevDay ? 'checked' : ''}>
+              <span>前日から表示</span>
+            </label>
+            <label class="prev-day-toggle-label">
+              <input type="checkbox" class="garbage-carryover-cb" ${task.carryOverPrevDay ? 'checked' : ''}>
+              <span>前日のチェックを引き継ぐ</span>
+            </label>
+          </div>
         </div>
+        ${warningHtml}
       `;
 
       const checkboxes = Array.from(row.querySelectorAll('.day-checkboxes input[type="checkbox"]'));
       const prevDayCb = row.querySelector('.garbage-prev-day-cb');
+      const carryOverCb = row.querySelector('.garbage-carryover-cb');
 
       checkboxes.forEach((cb) => {
         cb.addEventListener('change', () => {
@@ -1388,11 +1960,19 @@
           saveState();
           renderAll();
           renderEditorTaskLists();
+          renderGarbageConfigSection();
         });
       });
 
       prevDayCb.addEventListener('change', () => {
         task.showPrevDay = prevDayCb.checked;
+        saveState();
+        renderAll();
+        renderEditorTaskLists();
+      });
+
+      carryOverCb.addEventListener('change', () => {
+        task.carryOverPrevDay = carryOverCb.checked;
         saveState();
         renderAll();
         renderEditorTaskLists();
@@ -1432,6 +2012,25 @@
         <span class="editor-task-days">(${escapeHtml(formatDaysLabel(task.days, task.showPrevDay))})</span>
       `;
 
+      const controlsDiv = document.createElement('div');
+      controlsDiv.className = 'editor-task-controls';
+
+      if (task.showPrevDay) {
+        const carryToggle = document.createElement('label');
+        carryToggle.className = 'editor-task-toggle';
+        carryToggle.innerHTML = `
+          <input type="checkbox" ${task.carryOverPrevDay ? 'checked' : ''}>
+          <span>前日チェック引継</span>
+        `;
+        const checkbox = carryToggle.querySelector('input');
+        checkbox.addEventListener('change', () => {
+          task.carryOverPrevDay = checkbox.checked;
+          saveState();
+          renderAll();
+        });
+        controlsDiv.appendChild(carryToggle);
+      }
+
       const delBtn = document.createElement('button');
       delBtn.type = 'button';
       delBtn.className = 'editor-delete-btn';
@@ -1441,6 +2040,7 @@
       });
 
       li.appendChild(labelDiv);
+      li.appendChild(controlsDiv);
       li.appendChild(delBtn);
       listEl.appendChild(li);
     });
@@ -1463,6 +2063,7 @@
     const title = dom.inputTaskTitle.value.trim();
     const category = dom.inputTaskCategory.value;
     const showPrevDay = dom.inputTaskShowPrevDay.checked;
+    const carryOverPrevDay = dom.inputTaskCarryOver.checked;
 
     if (!title) return;
 
@@ -1486,6 +2087,7 @@
         isDiaper: isDiaperTask,
         days: daysValue,
         showPrevDay,
+        carryOverPrevDay,
         childStates: {}
       });
     } else {
@@ -1497,13 +2099,15 @@
         isGarbageConfig: isGarbage,
         days: daysValue,
         showPrevDay,
-        status: 'todo'
+        carryOverPrevDay,
+        status: null
       });
     }
 
     saveState();
     dom.inputTaskTitle.value = '';
     dom.inputTaskShowPrevDay.checked = false;
+    dom.inputTaskCarryOver.checked = false;
     renderEditorModalContents();
     renderAll();
   }
@@ -1551,12 +2155,12 @@
 
     // 自動リセット設定トグル
     if (dom.autoResetStatus) {
-      dom.autoResetStatus.addEventListener('click', toggleAutoResetConfig);
+      dom.autoResetStatus.addEventListener('click', toggleDateResetConfig);
     }
-    dom.btnCancelAutoResetConfig.addEventListener('click', closeAutoResetConfigModal);
-    dom.btnSaveAutoResetConfig.addEventListener('click', saveAutoResetConfigFromModal);
+    dom.btnCancelAutoResetConfig.addEventListener('click', closeDateResetConfigModal);
+    dom.btnSaveAutoResetConfig.addEventListener('click', saveDateResetConfigFromModal);
     dom.autoResetConfigModal.addEventListener('click', (e) => {
-      if (e.target === dom.autoResetConfigModal) closeAutoResetConfigModal();
+      if (e.target === dom.autoResetConfigModal) closeDateResetConfigModal();
     });
 
     // 手動リセット確認モーダル
@@ -1566,6 +2170,16 @@
     dom.resetModal.addEventListener('click', (e) => {
       if (e.target === dom.resetModal) closeResetModal();
     });
+
+    // おむつ枚数入力パネル
+    if (dom.btnCancelDiaperInput) {
+      dom.btnCancelDiaperInput.addEventListener('click', closeDiaperInputPanel);
+    }
+    if (dom.diaperInputModal) {
+      dom.diaperInputModal.addEventListener('click', (e) => {
+        if (e.target === dom.diaperInputModal) closeDiaperInputPanel();
+      });
+    }
 
     // 設定・タスク編集モーダル
     dom.btnOpenEditor.addEventListener('click', openEditorModal);
@@ -1582,9 +2196,6 @@
       const count = Number(btn.dataset.count);
       if (!Number.isNaN(count) && count >= 0 && count <= 4) {
         appState.childCount = count;
-        if (count > 0 && appState.activeChildId > count) {
-          appState.activeChildId = 1;
-        }
         saveState();
         renderChildConfigSection();
         renderAll();
@@ -1611,6 +2222,24 @@
 
     // 新規タスク追加
     dom.addTaskForm.addEventListener('submit', handleAddTaskSubmit);
+
+    // おむつの戻り時刻保存
+    if (dom.btnSaveDiaperReturnTime) {
+      dom.btnSaveDiaperReturnTime.addEventListener('click', () => {
+        const hour = parseInt(dom.diaperReturnHourInput.value, 10);
+        const minute = parseInt(dom.diaperReturnMinuteInput.value, 10);
+
+        if (isNaN(hour) || hour < 0 || hour > 23 || isNaN(minute) || minute < 0 || minute > 59) {
+          alert('有効な時刻を入力してください（時: 0-23、分: 0-59）');
+          return;
+        }
+
+        diaperReturnTime.hour = hour;
+        diaperReturnTime.minute = minute;
+        saveDiaperReturnTime();
+        alert('おむつの戻り時刻を保存しました');
+      });
+    }
 
     // 初期サンプルデータに復元
     dom.btnRestoreDefaults.addEventListener('click', () => {
@@ -1746,8 +2375,14 @@
   // 初期化実行
   // ==========================================================================
   function init() {
+    // テストモードバッジの表示
+    if (isTestMode && dom.testModeBadge) {
+      dom.testModeBadge.hidden = false;
+    }
+
     loadState();
-    loadAutoResetConfig();
+    loadDateResetConfig();
+    loadDiaperReturnTime();
     initAnalogClockFace();
     applyClockStyleUI();
     bindEvents();
